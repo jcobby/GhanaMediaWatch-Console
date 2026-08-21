@@ -1,0 +1,20 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Secrets — .env.example is committed, real env files never are.
+.env
+.env.local
+.env*.local
+
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+.eslintcache
+coverage/
+.vscode/
+.idea/
