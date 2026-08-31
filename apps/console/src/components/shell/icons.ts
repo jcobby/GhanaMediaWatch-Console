@@ -9,8 +9,21 @@ import {
   Share2,
   BadgeCheck,
   Banknote,
+  ScanEye,
+  History,
+  Map,
+  ShieldCheck,
+  Server,
+  Activity,
+  ChartLine,
+  Send,
+  LifeBuoy,
+  Scale,
+  KeyRound,
+  Flag,
   type LucideIcon,
 } from 'lucide-react';
+import type { NavIconName as CoreIconName } from '@dawuro/core';
 
 /**
  * Navigation icons, addressed by name.
@@ -36,6 +49,20 @@ export const NAV_ICONS = {
   share: Share2,
   badge: BadgeCheck,
   banknote: Banknote,
-} satisfies Record<string, LucideIcon>;
+  map: Map,
+  verify: ScanEye,
+  history: History,
+  shield: ShieldCheck,
+  server: Server,
+  activity: Activity,
+  chart: ChartLine,
+  send: Send,
+  lifebuoy: LifeBuoy,
+  scale: Scale,
+  key: KeyRound,
+  flag: Flag,
+  // Keyed by core's union rather than an inferred one, so a name added there
+  // without an icon here is a compile error instead of a blank square.
+} satisfies Record<CoreIconName, LucideIcon>;
 
-export type NavIconName = keyof typeof NAV_ICONS;
+export type NavIconName = CoreIconName;

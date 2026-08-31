@@ -21,12 +21,17 @@ export function SampleWatermark({ className }: { className?: string }) {
     >
       <div className="flex h-full w-full items-center justify-center">
         <span
-          className="whitespace-nowrap text-5xl font-bold uppercase tracking-[0.3em] text-white/25"
+          className="whitespace-nowrap text-6xl font-bold uppercase tracking-[0.3em] text-white/35"
           style={{
             transform: 'rotate(-24deg)',
-            // A soft dark edge keeps the mark readable over pale footage —
-            // white-on-white would make it vanish exactly where it matters.
-            textShadow: '0 2px 14px rgba(0,0,0,0.55)',
+            /*
+             * An outline rather than a drop shadow. Footage brightness is
+             * unpredictable — a shadow alone vanishes on dark frames and the
+             * fill alone vanishes on bright ones, so the mark carries both a
+             * stroke and a glow and survives either.
+             */
+            WebkitTextStroke: '1px rgba(255,255,255,0.22)',
+            textShadow: '0 2px 18px rgba(0,0,0,0.65), 0 0 3px rgba(0,0,0,0.45)',
           }}
         >
           Sample

@@ -18,6 +18,8 @@ export default async function BusinessLayout({ children }: { children: React.Rea
 
   const items: NavItem[] = [
     { href: '/inbox', label: 'Inbox', icon: 'inbox', count: waiting },
+    { href: '/onboarding', label: 'Onboarding', icon: 'clipboard' },
+    { href: '/map', label: 'Map & trends', icon: 'map' },
     { href: '/published', label: 'Published', icon: 'megaphone' },
     { href: '/surveys', label: 'Surveys', icon: 'clipboard' },
     { href: '/team', label: 'Team', icon: 'users' },
@@ -25,7 +27,10 @@ export default async function BusinessLayout({ children }: { children: React.Rea
   ];
 
   return (
-    <div className="flex">
+    /* h-screen + overflow-hidden on the shell means only the inner panels
+       scroll. Without it the whole document scrolls and the sidebar slides
+       away with the content, which is what a console must never do. */
+    <div className="flex h-screen overflow-hidden">
       <Sidebar
         items={items}
         brand={
@@ -38,7 +43,7 @@ export default async function BusinessLayout({ children }: { children: React.Rea
         }
         footer={<UserMenu user={user} />}
       />
-      <main className="h-screen flex-1 overflow-y-auto">{children}</main>
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
     </div>
   );
 }

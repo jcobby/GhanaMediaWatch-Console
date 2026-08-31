@@ -1,15 +1,22 @@
+import { BUSINESSES, SAMPLE_INCIDENTS } from '@dawuro/core';
 import { PageHeader } from '@/components/shell';
-import { Panel } from '@/components/ui';
+import { requireSession } from '@/lib/session';
+import { PublishedWorkspace } from './PublishedWorkspace';
 
-export default function Page() {
+export default async function Page() {
+  const session = await requireSession();
+  const business = BUSINESSES.find((b) => b.id === session.businessId) ?? BUSINESSES[1]!;
+  // Stands in for the licensed set until the API provides it.
+  const licensed = SAMPLE_INCIDENTS.slice(0, 4);
+
   return (
     <>
-      <PageHeader eyebrow="Published" title="Released to the public" description="What you licensed, and what you released." />
-      <div className="px-8 py-6">
-        <Panel className="p-8 text-center">
-          <p className="text-sm text-text-muted">Not built yet.</p>
-        </Panel>
-      </div>
+      <PageHeader
+        eyebrow="Published"
+        title="Released reports"
+        description="What you licensed, and what the public can see."
+      />
+      <PublishedWorkspace licensed={licensed} business={business} />
     </>
   );
 }

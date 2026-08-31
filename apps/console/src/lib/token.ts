@@ -1,5 +1,5 @@
 import { SignJWT, jwtVerify } from 'jose';
-import type { AccountType } from '@dawuro/core';
+import { ROLE_META, type AccountType, type PlatformRole } from '@dawuro/core';
 
 /**
  * Session token primitives, with no Node or `next/headers` dependency.
@@ -18,9 +18,29 @@ export interface SessionUser {
   email: string;
   displayName: string;
   accountType: AccountType;
+  /**
+   * The specific job this person does.
+   *
+   * `accountType` is the coarse axis the original three route groups were
+   * gated on; `role` is the twenty-value model that decides what the interface
+   * actually contains. Both are carried because middleware runs on the edge
+   * and cannot look either one up.
+   *
+   * Optional so sessions minted before roles existed still verify rather than
+   * logging everyone out on deploy.
+   */
+  role?: PlatformRole;
   businessId?: string;
   businessName?: string;
   title?: string;
+  /**
+   * Whether this organisation has finished onboarding.
+   *
+   * Carried on the session rather than looked up, because middleware runs on
+   * the edge before any page renders and cannot reach a database. It is set
+   * once at sign-in and refreshed when onboarding completes.
+   */
+  onboardingComplete?: boolean;
 }
 
 export function sessionSecret(): Uint8Array {
@@ -59,11 +79,30 @@ export async function verifySessionToken(token: string): Promise<SessionUser | n
  * result directly — a computed redirect that has to be cast is a redirect the
  * compiler has stopped checking.
  */
-export type ConsoleHome = '/platform' | '/inbox' | '/no-console';
+export type ConsoleHome = string;
 
-export function homeFor(accountType: AccountType): ConsoleHome {
+/**
+ * Where a signed-in user belongs.
+ *
+ * A business that has not finished onboarding goes to the wizard, not the
+ * inbox. An empty inbox with no explanation is the worst possible first
+ * impression — it looks like the product does not work.
+ */
+export function homeFor(
+  accountType: AccountType,
+  onboardingComplete = true,
+  role?: PlatformRole,
+): ConsoleHome {
+  // A role, when present, is the more specific answer and wins. An institution
+  // admin mid-onboarding is still an institution that has not been checked,
+  // so the wizard outranks even that.
+  if (role && !(accountType === 'business' && !onboardingComplete)) {
+    return ROLE_META[role].home;
+  }
+
   if (accountType === 'platform_owner') return '/platform';
-  if (accountType === 'business') return '/inbox';
+  if (accountType === 'editor') return '/editorial';
+  if (accountType === 'business') return onboardingComplete ? '/inbox' : '/onboarding';
   // Reporters have no console: capture, GPS gating and offline queueing are
   // the product, and they live on the phone.
   return '/no-console';

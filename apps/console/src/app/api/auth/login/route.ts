@@ -36,7 +36,14 @@ export async function POST(request: Request) {
   await createSession(result.user);
 
   return NextResponse.json({
-    redirectTo: homeFor(result.user.accountType),
+    // The role, when the account has one, is the more specific answer — an
+    // admin signing in belongs on their own dashboard, not on the shared
+    // platform console their coarse account type would send them to.
+    redirectTo: homeFor(
+      result.user.accountType,
+      result.user.onboardingComplete ?? true,
+      result.user.role,
+    ),
     accountType: result.user.accountType,
   });
 }

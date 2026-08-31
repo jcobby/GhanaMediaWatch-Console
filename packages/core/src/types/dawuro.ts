@@ -16,7 +16,16 @@ import type { IncidentCategory } from './api';
  *                   settle payouts. Seeded, never self-registered.
  */
 
-export type AccountType = 'reporter' | 'business' | 'platform_owner';
+/**
+ * Who someone is on the platform.
+ *
+ * `editor` is separate from `platform_owner` on purpose. Operating the service
+ * and deciding whether a claim is true are different jobs held by different
+ * organisations — the platform routes and bills, the editorial desk verifies.
+ * One account able to do both could route a report to itself and publish it
+ * unchecked.
+ */
+export type AccountType = 'reporter' | 'business' | 'platform_owner' | 'editor';
 
 // ─── where a submission goes ───────────────────────────────────────────────
 
@@ -222,9 +231,26 @@ export interface RoutingItem {
   /** Businesses the platform suggests, from sector and interest matching. */
   suggestedBusinessIds: string[];
   reporterHandle: string;
+  /**
+   * When the footage was filmed, which is not when it was uploaded.
+   *
+   * An operator routing an accident needs the capture time — a clip submitted
+   * an hour late is still an hour-old incident, and the two timestamps can
+   * differ by days when a reporter was offline.
+   */
+  capturedAtIso: string;
   submittedAtIso: string;
   status: 'awaiting_routing' | 'routed' | 'rejected';
   locationLabel: string | null;
+  /**
+   * Where the incident is, when the reporter allowed it.
+   *
+   * Separate from `locationLabel` because they answer different questions: the
+   * label is what an operator reads, the coordinate is what decides which
+   * employee is near enough to attend. A label alone cannot be measured
+   * against a branch boundary or a responder's position.
+   */
+  location: { latitude: number; longitude: number } | null;
   thumbnailUrl: string;
 }
 

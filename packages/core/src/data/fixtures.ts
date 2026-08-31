@@ -1,4 +1,49 @@
 import type { Incident, IncidentCategory, TimePrecision } from '../types/api';
+import { placeholderImage } from '../lib/placeholder';
+import { vettingStateFor, type AssuranceClass, type VerificationState } from '../types/assurance';
+import {
+  EMPTY_CONSENT,
+  formatReportId,
+  handlingRequirements,
+  type ConsentFlags,
+  type Severity,
+} from '../types/context';
+
+/** Cycled across the seeded reports so every branch of the UI is reachable. */
+const ASSURANCE_CYCLE: AssuranceClass[] = ['A', 'A', 'B', 'C', 'A', 'D', 'B', 'A'];
+
+const VERIFICATION_CYCLE: VerificationState[] = [
+  'verified_high_confidence',
+  'integrity_passed',
+  'corroboration_in_progress',
+  'integrity_flagged',
+  'verified_in_part',
+  'verified_high_confidence',
+  'disputed',
+  'received_unreviewed',
+];
+
+const SEVERITY_CYCLE: Severity[] = [
+  'urgent',
+  'concern',
+  'emergency',
+  'observation',
+  'urgent',
+  'concern',
+  'observation',
+  'concern',
+];
+
+const CONSENT_CYCLE: ConsentFlags[] = [
+  { ...EMPTY_CONSENT, publicPlace: true },
+  { ...EMPTY_CONSENT, publicPlace: true, distressing: true },
+  { ...EMPTY_CONSENT, publicPlace: true },
+  { ...EMPTY_CONSENT, containsMinors: true, publicPlace: true },
+  { ...EMPTY_CONSENT, showsPrivateProperty: true },
+  { ...EMPTY_CONSENT, publicPlace: true, subjectsConsented: true },
+  { ...EMPTY_CONSENT, publicPlace: true },
+  { ...EMPTY_CONSENT },
+];
 
 /**
  * Seeded sample incidents for the mock API client.
@@ -22,8 +67,8 @@ import type { Incident, IncidentCategory, TimePrecision } from '../types/api';
  * `lock` pins the result so each incident keeps the same image across restarts
  * — a demo that reshuffles its own photography cannot be talked over.
  */
-const img = (keywords: string, lock: number, w = 1080, h = 1920): string =>
-  `https://loremflickr.com/${w}/${h}/${keywords}?lock=${lock}`;
+const img = (category: IncidentCategory, lock: number, w = 1080, h = 1920): string =>
+  placeholderImage(`inc-${lock}`, category, { width: w, height: h });
 
 /**
  * Sample clips for the video cells. Short, ranged-request friendly, and served
@@ -178,18 +223,33 @@ export const SAMPLE_INCIDENTS: Incident[] = SEEDS.map((s, i) => {
     capturedAtPrecision = 'date_only';
   }
 
+  /*
+   * Spread across classes and states on purpose. A fixture set where every
+   * report is Class A and verified proves nothing about how the interface
+   * handles the cases that actually need care.
+   */
+  const assurance = ASSURANCE_CYCLE[i % ASSURANCE_CYCLE.length]!;
+  const verification = VERIFICATION_CYCLE[i % VERIFICATION_CYCLE.length]!;
+  const consent = CONSENT_CYCLE[i % CONSENT_CYCLE.length]!;
+
   return {
     id: s.id,
+    reportId: formatReportId(s.id),
     category: s.category,
     description: s.description,
-    vettingState: 'published',
+    vettingState: vettingStateFor(verification),
+    assurance,
+    verification,
+    severity: SEVERITY_CYCLE[i % SEVERITY_CYCLE.length]!,
+    landmark: showLocation ? s.label : null,
+    handling: handlingRequirements(consent),
     publishedAt: capturedAt.toISOString(),
     media: {
       kind: isVideo ? 'video' : 'photo',
       // A video still needs a poster: the player shows it while buffering, and
       // without one the cell flashes black before the first frame arrives.
-      url: isVideo ? VIDEO_CLIPS[i % VIDEO_CLIPS.length]! : img(s.imagery, i + 1),
-      posterUrl: img(s.imagery, i + 1, 540, 960),
+      url: isVideo ? VIDEO_CLIPS[i % VIDEO_CLIPS.length]! : img(s.category, i + 1),
+      posterUrl: img(s.category, i + 1, 540, 960),
       width: 1080,
       height: 1920,
       ...(isVideo ? { durationMs: 10_000 } : {}),
@@ -204,7 +264,12 @@ export const SAMPLE_INCIDENTS: Incident[] = SEEDS.map((s, i) => {
     capturedAtPrecision,
     publisher: s.anonymous
       ? { kind: 'anonymous' }
-      : { kind: 'user', id: `usr_${i}`, displayName: NAMES[i % NAMES.length]!, avatarUrl: null },
+      : {
+          kind: 'user',
+          id: `usr_${i}`,
+          displayName: NAMES[i % NAMES.length]!,
+          avatarUrl: null,
+        },
     counts: { reactions: s.reactions, comments: s.comments },
     viewerHasReacted: i === 1,
     ...(showLocation && s.distanceM !== undefined ? { distanceM: s.distanceM } : {}),

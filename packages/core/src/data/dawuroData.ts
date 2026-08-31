@@ -5,6 +5,8 @@ import type {
   RoutingItem,
   Survey,
 } from '../types/dawuro';
+import { ROLE_META, PLATFORM_ROLES, type PlatformRole } from '../types/roles';
+import { placeholderImage } from '../lib/placeholder';
 
 /**
  * Seed data for the Dawuro platform.
@@ -59,7 +61,15 @@ export const DEMO_PASSWORD = 'dawuro';
 export interface DemoLogin {
   email: string;
   displayName: string;
-  accountType: 'reporter' | 'business' | 'platform_owner';
+  accountType: 'reporter' | 'business' | 'platform_owner' | 'editor';
+  /**
+   * The specific job, when this account exists to demonstrate one.
+   *
+   * `accountType` decides the coarse route group; `role` decides the interface
+   * inside it. Optional because the original narrative accounts predate the
+   * twenty-role model and are still useful as they are.
+   */
+  role?: PlatformRole;
   /** Set for business accounts — links the login to a seeded organisation. */
   businessId?: string;
   businessName?: string;
@@ -110,10 +120,83 @@ export const DEMO_LOGINS: DemoLogin[] = [
     accountType: 'platform_owner',
     showcases: 'Console, approvals, routing override, payouts',
   },
+  {
+    email: 'desk@gna.gov.gh',
+    displayName: 'GNA Verification Desk',
+    accountType: 'editor',
+    showcases: 'Triage, corroboration, verification decisions',
+  },
 ];
 
+/**
+ * Names rather than "Demo User" twenty times.
+ *
+ * A console full of the same placeholder makes it impossible to tell at a
+ * glance whether the interface actually changed when you switched account.
+ */
+const ROLE_DEMO_NAMES: Record<PlatformRole, string> = {
+  super_admin: 'Ama Serwaa',
+  dawuro_admin: 'Kofi Mensah',
+  system_admin: 'Yaw Boateng',
+  hr_admin: 'Akosua Danso',
+  operations: 'Kwabena Owusu',
+  branch_manager: 'Efua Asante',
+  compliance_officer: 'Nana Adjei',
+  finance_officer: 'Abena Frimpong',
+  auditor: 'Kwame Antwi',
+  institution_admin: 'Adwoa Nyarko',
+  editorial_lead: 'Kojo Amankwah',
+  verification_editor: 'Esi Bediako',
+  dispatcher: 'Yaa Agyeman',
+  field_officer: 'Kwesi Appiah',
+  analyst: 'Afia Baffour',
+  survey_manager: 'Kwaku Ansah',
+  agent: 'Adjoa Tetteh',
+  affiliate_partner: 'Fiifi Quartey',
+  reporter: 'Araba Nkrumah',
+  support_desk: 'Kobina Sarpong',
+};
+
+/**
+ * One seeded account per role.
+ *
+ * Kept apart from DEMO_LOGINS above, which are narrative accounts — "the AMA
+ * inbox near its allowance", "a media house" — chosen to show the product
+ * doing something. These are the opposite: one per role, existing only so each
+ * of the twenty interfaces can be reached by signing in normally rather than
+ * through a switcher that bypasses the login.
+ *
+ * Same password as every other seeded account.
+ */
+export const ROLE_LOGINS: DemoLogin[] = PLATFORM_ROLES.map((role) => {
+  const meta = ROLE_META[role];
+  const admin = meta.module === 'admin';
+
+  return {
+    // Predictable from the role id, so nobody has to memorise twenty addresses.
+    email: `${role.replace(/_/g, '.')}@dawuro.gh`,
+    displayName: ROLE_DEMO_NAMES[role],
+    accountType: admin
+      ? ('platform_owner' as const)
+      : role === 'verification_editor' || role === 'editorial_lead'
+        ? ('editor' as const)
+        : role === 'reporter'
+          ? ('reporter' as const)
+          : ('business' as const),
+    role,
+    ...(admin || role === 'reporter'
+      ? {}
+      : { businessId: 'biz_ama', businessName: 'Accra Metropolitan Assembly' }),
+    showcases: meta.blurb,
+  };
+});
+
+/** Every seeded account, narrative and per-role alike. */
+export const ALL_DEMO_LOGINS: DemoLogin[] = [...DEMO_LOGINS, ...ROLE_LOGINS];
+
 export function findDemoLogin(email: string): DemoLogin | undefined {
-  return DEMO_LOGINS.find((l) => l.email.toLowerCase() === email.trim().toLowerCase());
+  const wanted = email.trim().toLowerCase();
+  return ALL_DEMO_LOGINS.find((l) => l.email.toLowerCase() === wanted);
 }
 
 // ─── businesses ────────────────────────────────────────────────────────────
@@ -302,10 +385,15 @@ export const ROUTING_QUEUE: RoutingItem[] = [
     requestedBusinessIds: [],
     suggestedBusinessIds: ['biz_nadmo', 'biz_joy', 'biz_star'],
     reporterHandle: '@kwesi',
+    capturedAtIso: hoursAgo(1 + 0.4),
     submittedAtIso: hoursAgo(1),
     status: 'awaiting_routing',
     locationLabel: 'Spintex Road, Accra',
-    thumbnailUrl: 'https://loremflickr.com/200/200/car,accident?lock=2',
+    location: { latitude: 5.625, longitude: -0.105 },
+    thumbnailUrl: placeholderImage('rt-2', 'accident', {
+      width: 720,
+      height: 1280,
+    }),
   },
   {
     id: 'rt_2',
@@ -316,10 +404,15 @@ export const ROUTING_QUEUE: RoutingItem[] = [
     requestedBusinessIds: ['biz_joy'],
     suggestedBusinessIds: ['biz_ama'],
     reporterHandle: '@anonymous',
+    capturedAtIso: hoursAgo(2 + 0.4),
     submittedAtIso: hoursAgo(2),
     status: 'awaiting_routing',
     locationLabel: null,
-    thumbnailUrl: 'https://loremflickr.com/200/200/river,mining?lock=3',
+    location: null,
+    thumbnailUrl: placeholderImage('rt-3', 'environment', {
+      width: 720,
+      height: 1280,
+    }),
   },
   {
     id: 'rt_3',
@@ -330,10 +423,15 @@ export const ROUTING_QUEUE: RoutingItem[] = [
     requestedBusinessIds: ['biz_ecg'],
     suggestedBusinessIds: ['biz_ecg', 'biz_ama'],
     reporterHandle: '@ama',
+    capturedAtIso: hoursAgo(5 + 0.4),
     submittedAtIso: hoursAgo(5),
     status: 'awaiting_routing',
     locationLabel: 'Adenta, Accra',
-    thumbnailUrl: 'https://loremflickr.com/200/200/powerline,pole?lock=6',
+    location: { latitude: 5.708, longitude: -0.168 },
+    thumbnailUrl: placeholderImage('rt-6', 'utility', {
+      width: 720,
+      height: 1280,
+    }),
   },
   {
     id: 'rt_4',
@@ -344,10 +442,15 @@ export const ROUTING_QUEUE: RoutingItem[] = [
     requestedBusinessIds: [],
     suggestedBusinessIds: ['biz_ama', 'biz_ecg'],
     reporterHandle: '@yaw',
+    capturedAtIso: hoursAgo(11 + 0.4),
     submittedAtIso: hoursAgo(11),
     status: 'routed',
     locationLabel: 'Achimota, Accra',
-    thumbnailUrl: 'https://loremflickr.com/200/200/streetlight,road?lock=4',
+    location: { latitude: 5.618, longitude: -0.227 },
+    thumbnailUrl: placeholderImage('rt-4', 'infrastructure', {
+      width: 720,
+      height: 1280,
+    }),
   },
 ];
 
@@ -375,7 +478,12 @@ export const SURVEYS: Survey[] = [
         prompt: 'How badly does your street flood in heavy rain?',
         required: true,
       },
-      { id: 'q3', kind: 'photo', prompt: 'Add a photo of the drain', required: false },
+      {
+        id: 'q3',
+        kind: 'photo',
+        prompt: 'Add a photo of the drain',
+        required: false,
+      },
     ],
     rewardPesewas: 500,
     targetArea: { latitude: 5.6037, longitude: -0.187, radiusM: 15_000 },
@@ -405,7 +513,12 @@ export const SURVEYS: Survey[] = [
         options: ['Voltage surges', 'Appliances trip', 'Lights flicker', 'Nothing unusual'],
         required: true,
       },
-      { id: 'q3', kind: 'text', prompt: 'Anything else we should know?', required: false },
+      {
+        id: 'q3',
+        kind: 'text',
+        prompt: 'Anything else we should know?',
+        required: false,
+      },
     ],
     rewardPesewas: 350,
     targetArea: { latitude: 5.7089, longitude: -0.1667, radiusM: 8_000 },

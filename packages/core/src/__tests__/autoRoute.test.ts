@@ -51,7 +51,10 @@ describe('what never routes', () => {
   it('never routes on budget alone', () => {
     // Matching purely on "has allowance" would send a wildlife report to an
     // insurer because they happened to have headroom.
-    const uninterested = biz({ interests: ['crime'], reportsUsedThisPeriod: 0 });
+    const uninterested = biz({
+      interests: ['crime'],
+      reportsUsedThisPeriod: 0,
+    });
     expect(autoRoute(sub({ category: 'wildlife' }), [uninterested])).toEqual([]);
   });
 });

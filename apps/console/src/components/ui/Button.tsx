@@ -37,7 +37,17 @@ const SIZE: Record<Size, string> = {
  * scanning a dense toolbar needs to see at a glance which actions are live.
  */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = 'primary', size = 'md', loading, leading, fullWidth, className, children, disabled, ...rest },
+  {
+    variant = 'primary',
+    size = 'md',
+    loading,
+    leading,
+    fullWidth,
+    className,
+    children,
+    disabled,
+    ...rest
+  },
   ref,
 ) {
   return (

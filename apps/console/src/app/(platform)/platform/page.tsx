@@ -32,7 +32,7 @@ export default async function PlatformConsole() {
         description="Reports route automatically. These are the ones that need a person."
       />
 
-      <div className="space-y-6 px-8 py-6">
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-7 py-6">
         {/* Queues first — the only things here that are anyone's job today. */}
         <div className="grid gap-4 sm:grid-cols-2">
           <QueueCard
@@ -53,9 +53,7 @@ export default async function PlatformConsole() {
             label="Organisations awaiting approval"
             count={pendingApplications.length}
             detail={
-              pendingApplications[0]
-                ? pendingApplications[0].organisationName
-                : 'Nothing waiting'
+              pendingApplications[0] ? pendingApplications[0].organisationName : 'Nothing waiting'
             }
             urgent={pendingApplications.length > 0}
           />

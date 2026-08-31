@@ -12,26 +12,60 @@
 
 // ─── enumerations ──────────────────────────────────────────────────────────
 
+import type { AssuranceClass, VerificationState } from './assurance';
+import type { HandlingRequirement, Severity } from './context';
+
 export const INCIDENT_CATEGORIES = [
+  // Emergency
   'fire',
   'accident',
+  'flood',
+  'weather',
+  'health',
+  // Crime and safety
+  'crime',
   'disorder',
-  'infrastructure',
+  'protest',
+  // Public services
   'utility',
+  'water',
+  'sanitation',
+  'road',
+  'transport',
+  'infrastructure',
+  'education',
+  // Governance
   'corruption',
+  'election',
+  'chieftaincy',
+  'land',
+  // Environment
+  'galamsey',
   'environment',
   'wildlife',
-  'flood',
-  'crime',
-  'health',
+  // Catch-all
   'other',
 ] as const;
 
 export type IncidentCategory = (typeof INCIDENT_CATEGORIES)[number];
 
+/**
+ * The coarse public-feed state.
+ *
+ * Superseded by VerificationState, which carries the eight editorial states and
+ * the language permitted for each. Retained because the public feed renders
+ * this, and `vettingStateFor` maps down to it.
+ */
 export type VettingState = 'pending_review' | 'published' | 'rejected' | 'restricted';
 
-export type MediaKind = 'photo' | 'video';
+/**
+ * What was captured.
+ *
+ * Audio is a first-class report type, not a lesser one: describing an incident
+ * from somewhere safe carries none of the risk of filming it, and it is the
+ * only mode that works in the dark or in a crowd.
+ */
+export type MediaKind = 'photo' | 'video' | 'audio';
 
 /** `low` means the reporter used the reduced-accuracy escape hatch at capture. */
 export type LocationConfidence = 'high' | 'low';
@@ -116,6 +150,13 @@ export interface IncidentCounts {
 /** What the feed, map and public detail endpoints return. */
 export interface Incident {
   id: string;
+  /**
+   * The short reference stamped on the footage and quoted afterwards.
+   *
+   * Distinct from `id`: `id` is for machines, `reportId` is what a reporter
+   * reads down a phone line and what appears burned into the frame.
+   */
+  reportId: string;
   category: IncidentCategory;
   description: string;
   vettingState: VettingState;
@@ -127,6 +168,24 @@ export interface Incident {
   /** What the client is allowed to render from `capturedAtIso`. See TimePrecision. */
   capturedAtPrecision: TimePrecision;
   publisher: Publisher;
+  /**
+   * How the media got here, technically. A fact, not a judgement.
+   */
+  assurance: AssuranceClass;
+  /**
+   * How far editorial has got. A judgement, not a fact.
+   *
+   * Kept separate from `assurance` on purpose: a file can have flawless
+   * integrity and still show a staged event, and the day those two collapse
+   * into one field is the day something unverified gets published as verified.
+   */
+  verification: VerificationState;
+  /** The reporter's own account of how urgent it is. */
+  severity: Severity;
+  /** A nearby name people use, when coordinates are not enough. */
+  landmark: string | null;
+  /** What must happen before this can be shown, from the consent flags. */
+  handling: HandlingRequirement[];
   counts: IncidentCounts;
   viewerHasReacted: boolean;
   /** Metres from the viewer. Present only when the query passed `near`. */

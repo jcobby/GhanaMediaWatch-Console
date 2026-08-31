@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import type { Route } from 'next';
 import { homeFor, readSession } from '@/lib/session';
 
 /**
@@ -9,5 +10,6 @@ import { homeFor, readSession } from '@/lib/session';
  */
 export default async function Index() {
   const session = await readSession();
-  redirect(session ? homeFor(session.accountType) : '/login');
+  if (!session) redirect('/login');
+  redirect(homeFor(session.accountType, session.onboardingComplete ?? true, session.role) as Route);
 }

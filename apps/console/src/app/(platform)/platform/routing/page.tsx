@@ -1,4 +1,4 @@
-import { BUSINESSES, ROUTING_QUEUE } from '@dawuro/core';
+import { BRANCHES, BUSINESSES, EMPLOYEES, ROUTING_QUEUE } from '@dawuro/core';
 import { PageHeader } from '@/components/shell';
 import { RoutingDesk } from './RoutingDesk';
 
@@ -18,7 +18,12 @@ export default async function RoutingPage() {
         title="Routing desk"
         description="Reports are matched automatically. Confirm the match, or override it."
       />
-      <RoutingDesk queue={queue} businesses={BUSINESSES} />
+      <RoutingDesk
+        queue={queue}
+        businesses={BUSINESSES}
+        employees={EMPLOYEES}
+        branches={BRANCHES}
+      />
     </>
   );
 }

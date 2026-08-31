@@ -1,14 +1,19 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Check, Plus, Search, Send, UserCircle2, MapPin, X } from 'lucide-react';
+import { Check, Plus, Search, Send, UserCircle2, X } from 'lucide-react';
 import {
   autoRoute,
+  formatExactCapture,
   formatRelativeTime,
+  type Branch,
   type BusinessAccount,
+  type Employee,
   type RoutingItem,
 } from '@dawuro/core';
 import { Badge, Button, Panel } from '@/components/ui';
+import { MediaFrame } from '@/components/MediaFrame';
+import { EmployeeAssignment } from '@/components/EmployeeAssignment';
 import { cn } from '@/lib/cn';
 
 /**
@@ -27,9 +32,13 @@ import { cn } from '@/lib/cn';
 export function RoutingDesk({
   queue,
   businesses,
+  employees,
+  branches,
 }: {
   queue: RoutingItem[];
   businesses: BusinessAccount[];
+  employees: Employee[];
+  branches: Branch[];
 }) {
   const [handled, setHandled] = useState<Record<string, string[]>>({});
   const [selectedId, setSelectedId] = useState<string | null>(queue[0]?.id ?? null);
@@ -38,15 +47,15 @@ export function RoutingDesk({
   const selected = queue.find((q) => q.id === selectedId) ?? pending[0] ?? null;
 
   return (
-    <div className="flex h-[calc(100vh-5.5rem)]">
-      <div className="flex w-[21rem] shrink-0 flex-col border-r border-hairline/[0.08]">
+    <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex w-[340px] shrink-0 flex-col border-r border-hairline/[0.07]">
         <div className="border-b border-hairline/[0.08] px-4 py-2.5">
           <p className="text-xs text-text-muted">
             <span className="tabular font-semibold text-text-primary">{pending.length}</span>{' '}
             awaiting a decision
           </p>
         </div>
-        <ul className="flex-1 overflow-y-auto">
+        <ul className="min-h-0 flex-1 overflow-y-auto">
           {queue.map((item) => {
             const active = selected?.id === item.id;
             const done = item.id in handled;
@@ -88,12 +97,14 @@ export function RoutingDesk({
         </ul>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {selected ? (
           <RoutingPane
             key={selected.id}
             item={selected}
             businesses={businesses}
+            employees={employees}
+            branches={branches}
             routedTo={handled[selected.id] ?? null}
             onRoute={(ids) => setHandled((prev) => ({ ...prev, [selected.id]: ids }))}
           />
@@ -110,11 +121,15 @@ export function RoutingDesk({
 function RoutingPane({
   item,
   businesses,
+  employees,
+  branches,
   routedTo,
   onRoute,
 }: {
   item: RoutingItem;
   businesses: BusinessAccount[];
+  employees: Employee[];
+  branches: Branch[];
   routedTo: string[] | null;
   onRoute: (ids: string[]) => void;
 }) {
@@ -139,6 +154,12 @@ function RoutingPane({
 
   const [selected, setSelected] = useState<string[]>(() => matches.map((m) => m.businessId));
   const [query, setQuery] = useState('');
+  /*
+   * Which person inside each recipient organisation gets it, keyed by business
+   * id. Naming nobody is valid and common — the report then waits in that
+   * organisation's shared inbox, which is what happens today.
+   */
+  const [assignees, setAssignees] = useState<Record<string, string | null>>({});
 
   const toggle = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -158,35 +179,41 @@ function RoutingPane({
     if (!q) return true;
     return b.name.toLowerCase().includes(q) || b.sector.toLowerCase().includes(q);
   });
-  const changed =
-    selected.length !== matches.length || selected.some((id) => !matchedIds.has(id));
+  const changed = selected.length !== matches.length || selected.some((id) => !matchedIds.has(id));
 
   return (
-    <div className="mx-auto max-w-3xl px-8 py-6">
-      <div className="flex gap-5">
-        <div className="h-32 w-24 shrink-0 overflow-hidden rounded-sm bg-canvas-raise">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge tone="accent">{item.category}</Badge>
-            <Badge tone={item.destination === 'directed' ? 'info' : 'neutral'}>
-              {item.destination}
-            </Badge>
-          </div>
-          <p className="mt-2 text-base leading-relaxed">{item.summary}</p>
-          <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-text-muted">
-            <span className="flex items-center gap-1.5">
-              <UserCircle2 className="h-3.5 w-3.5" /> {item.reporterHandle}
-            </span>
-            <span className="flex items-center gap-1.5">
-              <MapPin className="h-3.5 w-3.5" /> {item.locationLabel ?? 'Location hidden'}
-            </span>
-            <span>{formatRelativeTime(item.submittedAtIso)}</span>
-          </div>
-        </div>
+    <div className="mx-auto max-w-3xl px-7 py-6">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone="accent">{item.category}</Badge>
+        <Badge tone={item.destination === 'directed' ? 'info' : 'neutral'}>
+          {item.destination}
+        </Badge>
+        <span className="ml-auto flex items-center gap-1.5 text-xs text-text-muted">
+          <UserCircle2 className="h-3.5 w-3.5" /> {item.reporterHandle}
+          <span className="text-text-faint">
+            · submitted {formatRelativeTime(item.submittedAtIso)}
+          </span>
+        </span>
       </div>
+
+      <p className="mt-2.5 text-[15px] leading-relaxed">{item.summary}</p>
+
+      {/* Time and place are stamped on the frame, not printed beside it — an
+          operator forwarding this to a patrol unit sends the image, and the
+          claim has to survive the trip.
+
+          Watermarked here too. Nobody has paid for this report yet, and the
+          operator can forward it onward, so a clean frame reachable from this
+          screen would be a hole in the same protection the inbox relies on. */}
+      <MediaFrame
+        className="mt-4"
+        posterUrl={item.thumbnailUrl}
+        alt={item.summary}
+        when={formatExactCapture(item.capturedAtIso, 'exact')}
+        where={item.locationLabel}
+        isVideo
+        watermark
+      />
 
       {routedTo ? (
         <Panel className="mt-6 flex items-center gap-3 border-success/25 bg-success-wash/40 p-4">
@@ -196,9 +223,7 @@ function RoutingPane({
             <span className="font-medium text-text-primary">
               {routedTo.length === 0
                 ? 'nobody'
-                : routedTo
-                    .map((id) => businesses.find((b) => b.id === id)?.name ?? id)
-                    .join(', ')}
+                : routedTo.map((id) => businesses.find((b) => b.id === id)?.name ?? id).join(', ')}
             </span>
             .
           </p>
@@ -285,6 +310,38 @@ function RoutingPane({
               )}
             </div>
           </section>
+
+          {/* Who inside each organisation. Rendered per recipient because the
+              right person at a district assembly is not the right person at a
+              newsroom, and one combined list would hide that. */}
+          {selected.map((businessId) => {
+            const business = businesses.find((b) => b.id === businessId);
+            if (!business) return null;
+            const staff = employees.filter((e) => e.businessId === businessId);
+
+            return (
+              <EmployeeAssignment
+                key={businessId}
+                business={business}
+                employees={staff}
+                branches={branches.filter((b) => b.businessId === businessId)}
+                incident={{
+                  category: item.category,
+                  location: item.location,
+                  // Fire and road collisions are time-critical: reliability and
+                  // seniority matter more when minutes count.
+                  urgent: item.category === 'fire' || item.category === 'accident',
+                }}
+                assignedTo={assignees[businessId] ?? null}
+                onAssign={(employeeId) =>
+                  setAssignees((prev) => ({
+                    ...prev,
+                    [businessId]: employeeId,
+                  }))
+                }
+              />
+            );
+          })}
 
           <div className="mt-6 flex items-center gap-3 border-t border-hairline/[0.08] pt-5">
             <Button onClick={() => onRoute(selected)} disabled={selected.length === 0}>

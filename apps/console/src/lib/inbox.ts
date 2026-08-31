@@ -19,7 +19,10 @@ export function offeredTo(businessId: string): Incident[] {
         requestedBusinessIds: [],
         location:
           incident.location.latitude !== null && incident.location.longitude !== null
-            ? { latitude: incident.location.latitude, longitude: incident.location.longitude }
+            ? {
+                latitude: incident.location.latitude,
+                longitude: incident.location.longitude,
+              }
             : null,
       },
       BUSINESSES,

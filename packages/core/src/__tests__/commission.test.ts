@@ -20,7 +20,11 @@ describe('what earns', () => {
     // Visibility is the reward there; implying otherwise sets an expectation
     // the model cannot meet.
     const result = estimateCommission({ ...base, destination: 'public' });
-    expect(result).toEqual({ grossPesewas: 0, platformFeePesewas: 0, reporterPesewas: 0 });
+    expect(result).toEqual({
+      grossPesewas: 0,
+      platformFeePesewas: 0,
+      reporterPesewas: 0,
+    });
     expect(isEarning('public')).toBe(false);
   });
 
@@ -49,7 +53,11 @@ describe('the three figures always reconcile', () => {
   });
 
   it('returns whole pesewas, never fractions', () => {
-    const result = estimateCommission({ ...base, mediaKind: 'video', locationConfidence: 'low' });
+    const result = estimateCommission({
+      ...base,
+      mediaKind: 'video',
+      locationConfidence: 'low',
+    });
     expect(Number.isInteger(result.grossPesewas)).toBe(true);
     expect(Number.isInteger(result.platformFeePesewas)).toBe(true);
     expect(Number.isInteger(result.reporterPesewas)).toBe(true);
@@ -64,26 +72,41 @@ describe('the three figures always reconcile', () => {
 describe('what the platform pays more for', () => {
   it('pays more for video than for a photo', () => {
     const photo = estimateCommission(base).reporterPesewas;
-    const video = estimateCommission({ ...base, mediaKind: 'video' }).reporterPesewas;
+    const video = estimateCommission({
+      ...base,
+      mediaKind: 'video',
+    }).reporterPesewas;
     expect(video).toBeGreaterThan(photo);
   });
 
   it('pays more for an exclusive directed report', () => {
     const open = estimateCommission(base).reporterPesewas;
-    const exclusive = estimateCommission({ ...base, destination: 'directed' }).reporterPesewas;
+    const exclusive = estimateCommission({
+      ...base,
+      destination: 'directed',
+    }).reporterPesewas;
     expect(exclusive).toBeGreaterThan(open);
   });
 
   it('pays more for urgent categories than for routine ones', () => {
     // A fire is worth something for minutes; a pothole is worth the same next
     // week. Paying identically would tell reporters urgency is worthless.
-    const fire = estimateCommission({ ...base, category: 'fire' }).reporterPesewas;
-    const pothole = estimateCommission({ ...base, category: 'infrastructure' }).reporterPesewas;
+    const fire = estimateCommission({
+      ...base,
+      category: 'fire',
+    }).reporterPesewas;
+    const pothole = estimateCommission({
+      ...base,
+      category: 'infrastructure',
+    }).reporterPesewas;
     expect(fire).toBeGreaterThan(pothole);
   });
 
   it('pays less for a low-confidence location but still pays', () => {
-    const low = estimateCommission({ ...base, locationConfidence: 'low' }).reporterPesewas;
+    const low = estimateCommission({
+      ...base,
+      locationConfidence: 'low',
+    }).reporterPesewas;
     const high = estimateCommission(base).reporterPesewas;
     expect(low).toBeLessThan(high);
     // Refusing it outright would waste a report a dispatcher could still use.
@@ -93,7 +116,10 @@ describe('what the platform pays more for', () => {
   it('increases with each additional licensee, at a diminishing rate', () => {
     const one = estimateCommission({ ...base, licensedBy: 1 }).reporterPesewas;
     const two = estimateCommission({ ...base, licensedBy: 2 }).reporterPesewas;
-    const three = estimateCommission({ ...base, licensedBy: 3 }).reporterPesewas;
+    const three = estimateCommission({
+      ...base,
+      licensedBy: 3,
+    }).reporterPesewas;
     expect(two).toBeGreaterThan(one);
     expect(three).toBeGreaterThan(two);
     // The second buyer values the footage less than the first.
@@ -140,5 +166,44 @@ describe('money formatting', () => {
   it('compacts large balances only when asked', () => {
     expect(formatCedis(1_250_000, { compact: true })).toBe('GH₵12.5k');
     expect(formatCedis(1_250_000)).toContain('12,500');
+  });
+});
+
+describe('audio', () => {
+  const base = {
+    category: 'flood' as const,
+    destination: 'marketplace' as const,
+    locationConfidence: 'high' as const,
+  };
+
+  it('pays above a photograph and below a video', () => {
+    // Speaking an account takes more than pointing a lens; it shows less than
+    // footage. Pricing it like a photo would tell people the safest way to
+    // report is the least valuable.
+    const photo = estimateCommission({
+      ...base,
+      mediaKind: 'photo',
+    }).grossPesewas;
+    const audio = estimateCommission({
+      ...base,
+      mediaKind: 'audio',
+    }).grossPesewas;
+    const video = estimateCommission({
+      ...base,
+      mediaKind: 'video',
+    }).grossPesewas;
+
+    expect(audio).toBeGreaterThan(photo);
+    expect(audio).toBeLessThan(video);
+  });
+
+  it('stays an integer number of pesewas', () => {
+    const { grossPesewas, reporterPesewas, platformFeePesewas } = estimateCommission({
+      ...base,
+      mediaKind: 'audio',
+    });
+    for (const value of [grossPesewas, reporterPesewas, platformFeePesewas]) {
+      expect(Number.isInteger(value)).toBe(true);
+    }
   });
 });

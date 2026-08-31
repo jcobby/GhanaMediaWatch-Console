@@ -7,12 +7,14 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=@dawuro/console",
     "build": "npm run build --workspace=@dawuro/console",
+    "dev": "npm run dev --workspace=@dawuro/console",
+    "format": "prettier --write \"apps/console/src/**/*.{ts,tsx}\" \"packages/core/src/**/*.ts\"",
+    "format:check": "prettier --check \"apps/console/src/**/*.{ts,tsx}\" \"packages/core/src/**/*.ts\"",
+    "lint": "npm run lint --workspaces --if-present",
     "start": "npm run start --workspace=@dawuro/console",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
     "verify": "npm run typecheck && npm run lint && npm run test"
   },
   "engines": {

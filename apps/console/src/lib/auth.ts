@@ -1,6 +1,6 @@
 import 'server-only';
 import { z } from 'zod';
-import { DEMO_LOGINS, DEMO_PASSWORD, PLATFORM_OWNERS, BUSINESSES } from '@dawuro/core';
+import { ALL_DEMO_LOGINS, DEMO_PASSWORD, PLATFORM_OWNERS, BUSINESSES } from '@dawuro/core';
 import type { SessionUser } from './session';
 
 /**
@@ -22,8 +22,7 @@ export const credentialsSchema = z.object({
 export type Credentials = z.infer<typeof credentialsSchema>;
 
 export type AuthResult =
-  | { ok: true; user: SessionUser }
-  | { ok: false; error: string; needsAccessCode?: boolean };
+  { ok: true; user: SessionUser } | { ok: false; error: string; needsAccessCode?: boolean };
 
 /**
  * One message for every credential failure.
@@ -68,7 +67,7 @@ export async function authenticate(input: Credentials): Promise<AuthResult> {
     };
   }
 
-  const login = DEMO_LOGINS.find((l) => l.email.toLowerCase() === email);
+  const login = ALL_DEMO_LOGINS.find((l) => l.email.toLowerCase() === email);
   if (!login || input.password !== DEMO_PASSWORD) {
     return { ok: false, error: GENERIC_FAILURE };
   }
@@ -84,6 +83,12 @@ export async function authenticate(input: Credentials): Promise<AuthResult> {
       accountType: login.accountType,
       ...(login.businessId ? { businessId: login.businessId } : {}),
       ...(business?.name ? { businessName: business.name } : {}),
+      // Carried onto the session so the shell and its navigation can be built
+      // from the role rather than from the coarse account type.
+      ...(login.role ? { role: login.role } : {}),
+      // Seeded organisations are already live; only fresh registrations are
+      // held in the wizard.
+      onboardingComplete: true,
     },
   };
 }
