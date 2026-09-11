@@ -9,7 +9,7 @@ import {
   type AssignmentBlock,
   type AssignmentReason,
   type Branch,
-  type BusinessAccount,
+  type OrganisationAccount,
   type Employee,
 } from '@dawuro/core';
 import { Badge } from '@/components/ui';
@@ -83,14 +83,14 @@ function summariseBlocks(blocks: AssignmentBlock[]): string {
  * something the operator must be able to see and act on.
  */
 export function EmployeeAssignment({
-  business,
+  organisation,
   employees,
   branches,
   incident,
   onAssign,
   assignedTo,
 }: {
-  business: BusinessAccount;
+  organisation: OrganisationAccount;
   employees: Employee[];
   branches: Branch[];
   incident: AssignableIncident;
@@ -125,7 +125,7 @@ export function EmployeeAssignment({
               Assign inside
             </span>
             <span className="block truncate text-sm font-semibold tracking-[-0.01em] text-text-primary">
-              {business.name}
+              {organisation.name}
             </span>
           </span>
         </h2>

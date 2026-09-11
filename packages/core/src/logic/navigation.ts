@@ -248,3 +248,116 @@ export function navigationFor(role: PlatformRole): NavSection[] {
 export function reachableHrefs(role: PlatformRole): string[] {
   return [...new Set(navigationFor(role).flatMap((s) => s.items.map((i) => i.href)))];
 }
+
+/**
+ * The organisation shell's sidebar.
+ *
+ * Separate from `navigationFor` on purpose. That function answers "what may
+ * this administrator reach", and every one of its entries is capability-gated
+ * because an administrator always has a role. An organisation account may not: the
+ * seeded institution logins carry a `businessId` and nothing else, and
+ * `roleCan(undefined, …)` is false for everything — so a purely capability-
+ * driven menu would leave such an account with an empty sidebar.
+ *
+ * Hence two lists. The first is what the shell itself is: the pages any account
+ * inside an institution needs in order to use the product at all. The second is
+ * the work a particular job does, which is exactly what capabilities describe.
+ *
+ * Seven pages were built, routable, middleware-permitted and linked from
+ * nowhere — `/assignments`, `/affiliations`, `/agent`, `/earnings`, `/support`,
+ * `/invoices` and, through it, `/checkout`. They were unreachable by clicking:
+ * the only way in was to type the URL. This is the list that was missing.
+ */
+const ORGANISATION_BASE: {
+  label: string;
+  href: string;
+  icon: NavSection['items'][number]['icon'];
+}[] = [
+  { label: 'Inbox', href: '/inbox', icon: 'inbox' },
+  { label: 'Map & trends', href: '/map', icon: 'map' },
+  { label: 'Published', href: '/published', icon: 'megaphone' },
+  { label: 'Team', href: '/team', icon: 'users' },
+  { label: 'Account', href: '/account', icon: 'building2' },
+];
+
+/** Pages inside the organisation shell that a service role unlocks. */
+const ORGANISATION_BY_CAPABILITY = new Set([
+  '/assignments',
+  '/surveys',
+  '/affiliations',
+  '/agent',
+  '/earnings',
+  '/support',
+  '/invoices',
+]);
+
+/**
+ * @param role The signed-in person's service role, when they have one.
+ * @param inboxCount Reports waiting. Omitted rather than shown as zero.
+ */
+export interface OrganisationNavOptions {
+  /** The signed-in person's service role, when they have one. */
+  role?: PlatformRole;
+  /** Reports waiting. Omitted rather than shown as zero. */
+  inboxCount?: number;
+  /**
+   * Whether the organisation has finished onboarding.
+   *
+   * Defaults to true, because that is the state an account spends almost all
+   * of its life in and a missing flag should not strand somebody on a setup
+   * screen they have already completed.
+   */
+  onboardingComplete?: boolean;
+}
+
+/**
+ * Onboarding is a phase, not a destination.
+ *
+ * While it is unfinished the middleware holds the account on `/onboarding` and
+ * redirects every other organisation route back to it — so listing the rest of the
+ * shell would offer six links that all lead to the same place. And once it is
+ * finished there is nothing there to do, yet it sat in the sidebar for the life
+ * of the account, reading as an outstanding task that could never be cleared.
+ *
+ * So it is the only item during, and absent after.
+ */
+export function organisationNavigation({
+  role,
+  inboxCount,
+  onboardingComplete = true,
+}: OrganisationNavOptions = {}): NavSection[] {
+  if (!onboardingComplete) {
+    return [
+      { title: null, items: [{ label: 'Onboarding', href: '/onboarding', icon: 'clipboard' }] },
+    ];
+  }
+
+  const items = ORGANISATION_BASE.map((item) =>
+    item.href === '/inbox' && inboxCount ? { ...item, count: inboxCount } : item,
+  );
+
+  if (role) {
+    for (const entry of ENTRIES) {
+      if (!ORGANISATION_BY_CAPABILITY.has(entry.href)) continue;
+      if (!roleCan(role, entry.needs)) continue;
+      // The base list wins: a page named in both keeps its position and its
+      // count rather than appearing twice.
+      if (items.some((i) => i.href === entry.href)) continue;
+      items.push({ label: entry.label, href: entry.href, icon: entry.icon });
+    }
+  }
+
+  return [{ title: null, items }];
+}
+
+/**
+ * Every organisation-shell destination a role can reach across the account's life.
+ *
+ * Includes `/onboarding`, which no single moment shows alongside the rest — it
+ * is the whole menu before completion and gone after. A reachability check asks
+ * "can anyone ever get here", and the answer for onboarding is yes.
+ */
+export function organisationHrefs(role?: PlatformRole): string[] {
+  const after = organisationNavigation({ role }).flatMap((s) => s.items.map((i) => i.href));
+  return [...new Set(['/onboarding', ...after])];
+}

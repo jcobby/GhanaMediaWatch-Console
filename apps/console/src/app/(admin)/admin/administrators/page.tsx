@@ -1,12 +1,15 @@
 import { redirect } from 'next/navigation';
+import { NotWired } from '@/components/ui';
+import { ADMIN_ROLES, ROLE_META, roleCan, rolesWith, type ConsoleCapability } from '@dawuro/core';
 import {
-  ADMIN_ROLES,
-  ROLE_META,
-  roleCan,
-  rolesWith,
-  type ConsoleCapability,
-} from '@dawuro/core';
-import { Note, PageIntro, PageShell, Panel, Stat, StatGrid, Table } from '@/components/admin/Widgets';
+  Note,
+  PageIntro,
+  PageShell,
+  Panel,
+  Stat,
+  StatGrid,
+  Table,
+} from '@/components/admin/Widgets';
 import { requireSession } from '@/lib/session';
 import { AdminManager, UnofferedRoles } from './AdminManager';
 
@@ -31,12 +34,13 @@ export default async function Page() {
         title="Administrators"
         blurb="Who runs the platform, and the only place a new one is created."
       />
+      <NotWired what="Creating or changing an administrator" />
 
       <Note>
-        <span className="font-semibold">You are the platform owner.</span> Every other
-        administrator exists because this account created them, and nothing else in the product can.
-        That is deliberate: an account that can grant any authority should be used rarely and
-        deliberately, never for day-to-day work.
+        <span className="font-semibold">You are the platform owner.</span> Every other administrator
+        exists because this account created them, and nothing else in the product can. That is
+        deliberate: an account that can grant any authority should be used rarely and deliberately,
+        never for day-to-day work.
       </Note>
 
       <StatGrid>
@@ -57,6 +61,7 @@ export default async function Page() {
         subtitle="The authorities that matter, rather than every capability."
       >
         <Table
+          empty="No administrators yet. You add them here — nobody self-registers into an admin role."
           columns={['Role', ...MATRIX.map((m) => m.label)]}
           rows={ADMIN_ROLES.map((role) => [
             <span key="r" className="whitespace-nowrap font-medium text-text-primary">

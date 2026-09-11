@@ -11,6 +11,8 @@ import {
   Table,
 } from '@/components/admin/Widgets';
 import { requireSession } from '@/lib/session';
+import { Outage, load } from '@/components/ui';
+import { platform } from '@/lib/consoleApi';
 
 /**
  * How long footage survives.
@@ -32,22 +34,39 @@ const WINDOW_DAYS: Record<string, number | null> = {
   rejected: 30,
 };
 
-const HOLDS = [
-  {
-    reference: 'DW-VPR-WCH',
-    reason: 'Subject of a takedown request under Act 843',
-    since: '4 days',
-  },
-  {
-    reference: 'DW-DC9-VKM',
-    reason: 'Cited in a licensed publication; dispute open',
-    since: '11 days',
-  },
-];
-
 export default async function Page() {
   const session = await requireSession();
   if (!session.role || !roleCan(session.role, 'manage_retention')) redirect('/');
+
+  /*
+   * What is actually exempt from deletion, and what is due for it.
+   *
+   * A legal hold is the one thing on this page with legal weight: it is what
+   * stops footage being purged while a dispute or a request under Act 843 is
+   * open. Two invented holds meant an operator could believe evidence was
+   * protected when nothing was holding it, and the retention sweep would have
+   * deleted it on schedule.
+   */
+  const result = await load(async () => {
+    const holds = await platform.legalHolds<LegalHold>();
+    const inventory = await platform.retentionInventory<RetentionInventory>().catch(() => null);
+    return { holds, inventory };
+  });
+
+  if (!result.ok) {
+    return (
+      <PageShell>
+        <PageIntro
+          title="Retention"
+          blurb="How long footage survives, and what a reporter sees once it does not."
+        />
+        <Outage error={result.error} retryHref="/admin/retention" />
+      </PageShell>
+    );
+  }
+
+  const HOLDS = result.data.holds;
+  const inventory = result.data.inventory;
 
   return (
     <PageShell>
@@ -57,9 +76,23 @@ export default async function Page() {
       />
 
       <StatGrid>
-        <Stat label="Originals held" value="2.4 TB" />
-        <Stat label="Oldest original" value="14 mo" />
-        <Stat label="Due for deletion" value="1,208" hint="Next 30 days" />
+        {/*
+          These three were the literals "2.4 TB", "14 mo" and "1,208" — numbers
+          that never moved and described nothing. They come from the retention
+          inventory now, and read as unknown when it cannot be fetched rather
+          than as a figure somebody might act on.
+        */}
+        <Stat label="Originals held" value={inventory?.originalsHeld ?? 'Not available'} />
+        <Stat label="Oldest original" value={inventory?.oldestOriginal ?? 'Not available'} />
+        <Stat
+          label="Due for deletion"
+          value={
+            inventory?.dueForDeletion === undefined
+              ? 'Not available'
+              : String(inventory.dueForDeletion)
+          }
+          hint="Next 30 days"
+        />
         <Stat
           label="Legal holds"
           value={String(HOLDS.length)}
@@ -73,6 +106,7 @@ export default async function Page() {
         subtitle="Keyed off what a report turned out to be, not merely how old it is."
       >
         <Table
+          empty="No legal holds. Reports follow the retention schedule unless somebody places one."
           columns={['State', 'Keep for', 'Publishable', 'Rationale']}
           rows={VERIFICATION_STATES.map((state) => {
             const days = WINDOW_DAYS[state] ?? null;
@@ -135,4 +169,24 @@ export default async function Page() {
       </Note>
     </PageShell>
   );
+}
+
+/** A report exempted from the retention schedule. */
+interface LegalHold {
+  reference: string;
+  reason: string;
+  since: string;
+}
+
+/**
+ * The retention inventory, as far as this page renders it.
+ *
+ * Every field is optional: the endpoint's shape is not pinned in
+ * `@dawuro/core`, and a figure this console cannot source is shown as
+ * unavailable rather than guessed.
+ */
+interface RetentionInventory {
+  originalsHeld?: string;
+  oldestOriginal?: string;
+  dueForDeletion?: number;
 }

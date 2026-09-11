@@ -293,6 +293,67 @@ export function nextStates(from: VerificationState): VerificationState[] {
  * an editor marked verified is still only usable as corroborated material,
  * and `usableAlone` is what says so.
  */
+/**
+ * The verification meta for a value that came off the wire.
+ *
+ * **`VERIFICATION_META[state]` is a crash waiting for one unrecognised
+ * string.** It is a `Record<VerificationState, …>`, and that is a promise
+ * TypeScript can keep only about values TypeScript produced — while every value
+ * these screens index it with arrives as JSON from a service that publishes no
+ * response schema for half its endpoints.
+ *
+ * `/editorial/decided` proved it. The page mapped its rows to an incident shape
+ * that turned out to be wrong, indexed this record with `undefined`, and took
+ * the entire route down: *Cannot read properties of undefined (reading
+ * 'permittedRepresentation')*. A desk showing nothing at all because one row
+ * was shaped differently is a far worse failure than a row reading
+ * "unrecognised".
+ *
+ * So server data comes through here, and the fallback is deliberately the most
+ * cautious entry there could be: not publishable, not licensable, and the word
+ * "verified" not permitted. A state this client does not understand must never
+ * be treated as one that clears a gate.
+ *
+ * Values the client itself produced — iterating `nextStates`, a constant, a
+ * decision the operator just made — may index the record directly. That
+ * distinction is the whole rule.
+ */
+export function verificationMeta(state: string | null | undefined): VerificationMeta {
+  return VERIFICATION_META[state as VerificationState] ?? UNRECOGNISED_VERIFICATION;
+}
+
+const UNRECOGNISED_VERIFICATION: VerificationMeta = {
+  label: 'Unrecognised state',
+  meaning: 'This console does not know this verification state.',
+  permittedRepresentation:
+    'This console does not recognise the state recorded against this report, so it cannot say what may be claimed about it. Treat it as unverified.',
+  publishable: false,
+  licensable: false,
+  mayUseWordVerified: false,
+  hue: '#64748b',
+};
+
+/**
+ * The assurance meta for a value that came off the wire. See `verificationMeta`.
+ *
+ * The fallback is the most cautious class there could be: not usable alone, no
+ * expedited review. A capture class this client has never seen is not one to
+ * put in front of the public on its own.
+ */
+export function assuranceMeta(assurance: string | null | undefined): AssuranceMeta {
+  return ASSURANCE_META[assurance as AssuranceClass] ?? UNRECOGNISED_ASSURANCE;
+}
+
+const UNRECOGNISED_ASSURANCE: AssuranceMeta = {
+  label: 'Unrecognised class',
+  permittedLabel: 'Capture integrity unknown',
+  description:
+    'This console does not recognise the capture assurance class recorded against this report.',
+  expeditedReview: false,
+  usableAlone: false,
+  hue: '#64748b',
+};
+
 export function canPublishReport(
   state: VerificationState,
   assurance: AssuranceClass,

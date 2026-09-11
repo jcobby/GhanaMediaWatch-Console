@@ -64,6 +64,30 @@ export const SEVERITIES: Severity[] = ['observation', 'concern', 'urgent', 'emer
 /** Ghana's emergency number, shown alongside the warning. */
 export const EMERGENCY_NUMBER = '112';
 
+/**
+ * The severity meta for a value that came off the wire.
+ *
+ * `SEVERITY_META[severity]` is a `Record<Severity, …>`, and the severity on a
+ * report is whatever the service sent. One value this client has not shipped
+ * support for takes down every screen that ranks a queue. See
+ * `verificationMeta` for the shape of the failure this prevents.
+ *
+ * The fallback is the lowest weight and the quietest colour: an unrecognised
+ * severity must not push a report up a triage queue on the strength of a word
+ * nobody here understands.
+ */
+export function severityMeta(severity: string | null | undefined): SeverityMeta {
+  return SEVERITY_META[severity as Severity] ?? UNRECOGNISED_SEVERITY;
+}
+
+const UNRECOGNISED_SEVERITY: SeverityMeta = {
+  label: 'Unrecognised',
+  hint: 'This console does not know this severity.',
+  hue: '#64748b',
+  warnUseEmergencyServices: false,
+  weight: 1,
+};
+
 export function warnsAboutEmergencyServices(severity: Severity): boolean {
   return SEVERITY_META[severity].warnUseEmergencyServices;
 }

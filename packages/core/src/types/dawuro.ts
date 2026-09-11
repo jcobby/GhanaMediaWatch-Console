@@ -9,10 +9,10 @@ import type { IncidentCategory } from './api';
  * Three parties, and the whole design follows from keeping them distinct:
  *
  *   reporter        members of the public who capture and submit, and earn a
- *                   commission when a business licenses their report
- *   business        agencies, media houses and companies who subscribe to
+ *                   commission when an organisation licenses their report
+ *   organisation        agencies, media houses and companies who subscribe to
  *                   receive reports, run surveys, and pay royalties
- *   platform_owner  operators who route submissions, approve businesses, and
+ *   platform_owner  operators who route submissions, approve organisations, and
  *                   settle payouts. Seeded, never self-registered.
  */
 
@@ -25,7 +25,18 @@ import type { IncidentCategory } from './api';
  * One account able to do both could route a report to itself and publish it
  * unchecked.
  */
-export type AccountType = 'reporter' | 'business' | 'platform_owner' | 'editor';
+/**
+ * What kind of account this is.
+ *
+ * `organisation` was `business`, renamed with the rest of the vocabulary: the
+ * party it names is a district assembly or NADMO as often as it is a company,
+ * and every screen calls it an organisation.
+ *
+ * Derived by the console from what `/me` reports, so it crosses no wire
+ * contract — but it *is* written into the signed session cookie, which is why
+ * `verifySessionToken` accepts the old spelling on the way in.
+ */
+export type AccountType = 'reporter' | 'organisation' | 'platform_owner' | 'editor';
 
 // ─── where a submission goes ───────────────────────────────────────────────
 
@@ -36,11 +47,11 @@ export type AccountType = 'reporter' | 'business' | 'platform_owner' | 'editor';
 export type SubmissionDestination =
   /** The public feed. No commission — visibility is the reward. */
   | 'public'
-  /** Offered to subscribing businesses. Earns a commission if licensed. */
+  /** Offered to subscribing organisations. Earns a commission if licensed. */
   | 'marketplace'
-  /** Sent to named businesses only. Never appears publicly. */
+  /** Sent to named organisations only. Never appears publicly. */
   | 'directed'
-  /** Public *and* offered to businesses. */
+  /** Public *and* offered to organisations. */
   | 'both';
 
 export const SUBMISSION_DESTINATIONS: readonly SubmissionDestination[] = [
@@ -50,9 +61,9 @@ export const SUBMISSION_DESTINATIONS: readonly SubmissionDestination[] = [
   'both',
 ];
 
-// ─── businesses ────────────────────────────────────────────────────────────
+// ─── organisations ────────────────────────────────────────────────────────────
 
-export type BusinessSector =
+export type OrganisationSector =
   'government' | 'media' | 'utility' | 'insurance' | 'ngo' | 'research' | 'other';
 
 export type SubscriptionTier = 'basic' | 'standard' | 'enterprise';
@@ -75,7 +86,7 @@ export interface SubscriptionPlan {
    */
   perDownloadPesewas: number | null;
   seats: number;
-  /** Surveys the business may have running at once. 0 disables the feature. */
+  /** Surveys the organisation may have running at once. 0 disables the feature. */
   concurrentSurveys: number;
   canDirectRequest: boolean;
 }
@@ -119,10 +130,10 @@ export const SUBSCRIPTION_PLANS: Record<SubscriptionTier, SubscriptionPlan> = {
   },
 };
 
-export interface BusinessAccount {
+export interface OrganisationAccount {
   id: string;
   name: string;
-  sector: BusinessSector;
+  sector: OrganisationSector;
   /** Verified accounts may be credited publicly when they action a report. */
   verified: boolean;
   tier: SubscriptionTier;
@@ -137,7 +148,7 @@ export interface BusinessAccount {
    * routing chose to show it.
    */
   reportsUsedThisPeriod: number;
-  /** Categories this business is interested in — drives routing suggestions. */
+  /** Categories this organisation is interested in — drives routing suggestions. */
   interests: IncidentCategory[];
   logoUrl: string | null;
 }
@@ -145,9 +156,9 @@ export interface BusinessAccount {
 // ─── earnings ──────────────────────────────────────────────────────────────
 
 export type CommissionStatus =
-  /** Submitted; no business has licensed it yet. */
+  /** Submitted; no organisation has licensed it yet. */
   | 'pending'
-  /** A business licensed the report. Amount is fixed at this point. */
+  /** An organisation licensed the report. Amount is fixed at this point. */
   | 'earned'
   /** Included in a payout batch. */
   | 'paid'
@@ -160,7 +171,7 @@ export interface CommissionEntry {
   /** Short label of the report, so the ledger reads without a second lookup. */
   incidentSummary: string;
   category: IncidentCategory;
-  /** Null while pending — no business has licensed it. */
+  /** Null while pending — no organisation has licensed it. */
   businessName: string | null;
   status: CommissionStatus;
   /** Pesewas. Integer arithmetic only; money never touches a float. */
@@ -216,8 +227,8 @@ export interface Survey {
 /**
  * A submission waiting on the platform owner to route it.
  *
- * Reports do not reach businesses automatically. An operator decides which
- * businesses a marketplace submission is offered to — that judgement is the
+ * Reports do not reach organisations automatically. An operator decides which
+ * organisations a marketplace submission is offered to — that judgement is the
  * platform's actual product, and it is what a subscription buys.
  */
 export interface RoutingItem {
@@ -226,9 +237,9 @@ export interface RoutingItem {
   summary: string;
   category: IncidentCategory;
   destination: SubmissionDestination;
-  /** Businesses the reporter named, on a directed submission. */
+  /** Organisations the reporter named, on a directed submission. */
   requestedBusinessIds: string[];
-  /** Businesses the platform suggests, from sector and interest matching. */
+  /** Organisations the platform suggests, from sector and interest matching. */
   suggestedBusinessIds: string[];
   reporterHandle: string;
   /**

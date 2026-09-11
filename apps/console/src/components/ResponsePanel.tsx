@@ -9,6 +9,7 @@ import {
   isClosed,
   latestResponse,
   needsEscalation,
+  responseMeta,
   slaState,
   type ResponseAction,
   type ResponseEntry,
@@ -105,7 +106,7 @@ export function ResponsePanel({
           {[...entries]
             .sort((a, b) => Date.parse(a.atIso) - Date.parse(b.atIso))
             .map((e) => {
-              const meta = RESPONSE_META[e.action];
+              const meta = responseMeta(e.action);
               return (
                 <li key={e.id} className="flex items-start gap-2.5">
                   <span
@@ -139,7 +140,7 @@ export function ResponsePanel({
         {closed && !pending ? (
           <p className="mb-2.5 flex items-center gap-1.5 text-2xs text-text-muted">
             <ArrowUpRight className="h-3 w-3" />
-            Closed after &ldquo;{RESPONSE_META[latest!.action].label}&rdquo;. Recording anything
+            Closed after &ldquo;{responseMeta(latest?.action).label}&rdquo;. Recording anything
             further reopens it.
           </p>
         ) : null}

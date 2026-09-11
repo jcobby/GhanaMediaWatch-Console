@@ -1,11 +1,12 @@
 import { redirect } from 'next/navigation';
 import {
-  ASSURANCE_META,
-  EDITORIAL_CASES,
-  SAMPLE_INCIDENTS,
   VERIFICATION_META,
+  assuranceMeta,
   nextStates,
   roleCan,
+  verificationMeta,
+  type EditorialCase,
+  type Incident,
 } from '@dawuro/core';
 import {
   Note,
@@ -18,15 +19,31 @@ import {
   Table,
 } from '@/components/admin/Widgets';
 import { requireSession } from '@/lib/session';
+import { Outage, load } from '@/components/ui';
+import { editorial } from '@/lib/consoleApi';
 
 export default async function Page() {
   const session = await requireSession();
   if (!session.role || !roleCan(session.role, 'assign_editors')) redirect('/');
 
-  const cases = EDITORIAL_CASES.map((c) => ({
-    ...c,
-    incident: SAMPLE_INCIDENTS.find((i) => i.id === c.incidentId),
-  }));
+  /*
+   * Who is working what, from the live queue.
+   *
+   * The report travels with its case where the API embeds it. Nothing is
+   * matched against a local list of incidents: a case whose footage this
+   * console cannot see is still a real case, and pairing it with the wrong
+   * report would be worse than showing it bare.
+   */
+  const result = await load(() => editorial.queue<EditorialCase & { incident?: Incident }>());
+  if (!result.ok) {
+    return (
+      <PageShell>
+        <PageIntro title="Editorial desk" blurb="Who is working what, and what is ageing." />
+        <Outage error={result.error} retryHref="/editorial/desk" />
+      </PageShell>
+    );
+  }
+  const cases = result.data;
 
   const unassigned = cases.filter((c) => !c.assignedToEditorName);
   const byEditor = new Map<string, number>();
@@ -92,10 +109,10 @@ export default async function Page() {
                 tone={i?.assurance === 'C' ? 'bad' : i?.assurance === 'B' ? 'warn' : 'info'}
               >
                 Class {i?.assurance ?? '—'}
-                {i && !ASSURANCE_META[i.assurance].usableAlone ? ' · lead only' : ''}
+                {i && !assuranceMeta(i.assurance).usableAlone ? ' · lead only' : ''}
               </Pill>,
               <span key="s" className="text-xs text-text-muted">
-                {i ? VERIFICATION_META[i.verification].label : '—'}
+                {i ? verificationMeta(i.verification).label : '—'}
               </span>,
               <span key="n" className="text-xs text-text-faint">
                 {onward.length

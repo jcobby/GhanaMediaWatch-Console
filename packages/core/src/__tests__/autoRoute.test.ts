@@ -1,7 +1,7 @@
 import { autoRoute, canReceive, needsReview, type RoutableSubmission } from '../logic/autoRoute';
-import type { BusinessAccount } from '../types/dawuro';
+import type { OrganisationAccount } from '../types/dawuro';
 
-function biz(overrides: Partial<BusinessAccount> = {}): BusinessAccount {
+function biz(overrides: Partial<OrganisationAccount> = {}): OrganisationAccount {
   return {
     id: 'b1',
     name: 'Test Org',
@@ -60,7 +60,7 @@ describe('what never routes', () => {
 });
 
 describe('interest matching', () => {
-  it('routes to a business that declared the category', () => {
+  it('routes to an organisation that declared the category', () => {
     const matches = autoRoute(sub({ category: 'flood' }), [biz({ interests: ['flood'] })]);
     expect(matches).toHaveLength(1);
     expect(matches[0]!.reasons).toContain('interest_match');
@@ -72,7 +72,7 @@ describe('interest matching', () => {
 });
 
 describe('explicit requests outrank heuristics', () => {
-  it('routes to a named business even with no interest match', () => {
+  it('routes to a named organisation even with no interest match', () => {
     // The reporter was there. Their judgement beats a category list.
     const matches = autoRoute(sub({ category: 'wildlife', requestedBusinessIds: ['b1'] }), [
       biz({ interests: ['flood'] }),
@@ -81,7 +81,7 @@ describe('explicit requests outrank heuristics', () => {
     expect(matches[0]!.reasons).toContain('requested');
   });
 
-  it('ranks a requested business above an interest match', () => {
+  it('ranks a requested organisation above an interest match', () => {
     const matches = autoRoute(sub({ requestedBusinessIds: ['b2'] }), [
       biz({ id: 'b1', interests: ['flood'] }),
       biz({ id: 'b2', interests: [] }),
@@ -91,7 +91,7 @@ describe('explicit requests outrank heuristics', () => {
 });
 
 describe('directed submissions', () => {
-  it('goes only to the named businesses', () => {
+  it('goes only to the named organisations', () => {
     const matches = autoRoute(sub({ destination: 'directed', requestedBusinessIds: ['b2'] }), [
       biz({ id: 'b1', interests: ['flood'] }),
       biz({ id: 'b2', interests: ['flood'] }),
@@ -99,7 +99,7 @@ describe('directed submissions', () => {
     expect(matches.map((m) => m.businessId)).toEqual(['b2']);
   });
 
-  it('routes nowhere when the named business cannot receive', () => {
+  it('routes nowhere when the named organisation cannot receive', () => {
     const matches = autoRoute(sub({ destination: 'directed', requestedBusinessIds: ['b1'] }), [
       biz({ id: 'b1', subscriptionStatus: 'cancelled' }),
     ]);
@@ -121,7 +121,7 @@ describe('watch areas', () => {
     expect(autoRoute(far, [biz()], areas)).toEqual([]);
   });
 
-  it('still routes to a named business outside their own area', () => {
+  it('still routes to a named organisation outside their own area', () => {
     const far = sub({
       location: { latitude: 6.7, longitude: -1.6 },
       requestedBusinessIds: ['b1'],
@@ -156,7 +156,7 @@ describe('when an operator should look', () => {
     expect(needsReview(sub({ category: 'wildlife' }), [])).toBe(true);
   });
 
-  it('flags a requested business that did not match', () => {
+  it('flags a requested organisation that did not match', () => {
     const submission = sub({ requestedBusinessIds: ['b1', 'b9'] });
     const matches = [{ businessId: 'b1', score: 100, reasons: ['requested' as const] }];
     expect(needsReview(submission, matches)).toBe(true);

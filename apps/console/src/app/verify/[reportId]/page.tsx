@@ -1,13 +1,16 @@
 import Link from 'next/link';
 import { AlertCircle, Clock, MapPin } from 'lucide-react';
 import {
-  ASSURANCE_META,
-  SAMPLE_INCIDENTS,
-  VERIFICATION_META,
+  assuranceMeta,
   formatExactCapture,
+  formatPlace,
+  verificationMeta,
+  type Incident,
 } from '@dawuro/core';
-import { Panel } from '@/components/ui';
+import { Panel, Outage } from '@/components/ui';
+import { publicApi } from '@/lib/consoleApi';
 import { MediaFrame } from '@/components/MediaFrame';
+import { mediaHref } from '@/lib/mediaHref';
 import { AssuranceBadge, VerificationBadge } from '@/components/TrustBadges';
 
 /**
@@ -19,9 +22,40 @@ import { AssuranceBadge, VerificationBadge } from '@/components/TrustBadges';
  */
 export default async function Page({ params }: { params: Promise<{ reportId: string }> }) {
   const { reportId } = await params;
-  const incident = SAMPLE_INCIDENTS.find(
-    (i) => i.reportId.toUpperCase() === reportId.toUpperCase(),
-  );
+
+  /*
+   * The public check, against the real record.
+   *
+   * This is the page a reference code on a broadcast points at: somebody who
+   * distrusts a clip types the code and is told what the platform established
+   * about it. Answering that from seeded incidents meant the two possible
+   * outcomes were both wrong — a real code returned "no such report", and a
+   * seeded code returned a verification claim about footage that never existed.
+   *
+   * The three outcomes are kept apart deliberately. "No such report" and "we
+   * could not check right now" mean opposite things to somebody deciding
+   * whether to believe a video, and collapsing them would let an outage read as
+   * a denial.
+   */
+  let incident: Incident | null = null;
+  let failure: unknown = null;
+  try {
+    incident = await publicApi.byReference<Incident>(reportId);
+  } catch (error) {
+    // A 404 is an answer: there is no such report. Anything else is a failure
+    // to answer, and must not be dressed up as one.
+    const status = (error as { status?: number }).status;
+    if (status === 404) incident = null;
+    else failure = error;
+  }
+
+  if (failure) {
+    return (
+      <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6">
+        <Outage error={failure} retryHref={`/verify/${encodeURIComponent(reportId)}`} />
+      </main>
+    );
+  }
 
   if (!incident) {
     return (
@@ -46,8 +80,8 @@ export default async function Page({ params }: { params: Promise<{ reportId: str
     );
   }
 
-  const assurance = ASSURANCE_META[incident.assurance];
-  const verification = VERIFICATION_META[incident.verification];
+  const assurance = assuranceMeta(incident.assurance);
+  const verification = verificationMeta(incident.verification);
   const captured = formatExactCapture(incident.capturedAtIso, incident.capturedAtPrecision);
 
   return (
@@ -59,11 +93,13 @@ export default async function Page({ params }: { params: Promise<{ reportId: str
 
       <MediaFrame
         className="mt-5"
-        posterUrl={incident.media.posterUrl}
+        posterUrl={mediaHref(incident.id)}
+        {...(incident.media.kind === 'video' ? { videoUrl: mediaHref(incident.id) } : {})}
         alt={incident.description}
         when={captured}
-        where={incident.location.label}
+        where={formatPlace(incident.location)}
         isVideo={incident.media.kind === 'video'}
+        byteSize={incident.media.byteSize}
         watermark
       />
 

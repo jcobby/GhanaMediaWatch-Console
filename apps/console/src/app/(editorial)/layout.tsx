@@ -1,6 +1,6 @@
-import { SAMPLE_INCIDENTS, VERIFICATION_META } from '@dawuro/core';
 import { Sidebar, UserMenu, type NavItem } from '@/components/shell';
 import { requireSession } from '@/lib/session';
+import { editorial } from '@/lib/consoleApi';
 
 /**
  * The verification desk.
@@ -13,13 +13,27 @@ import { requireSession } from '@/lib/session';
 export default async function EditorialLayout({ children }: { children: React.ReactNode }) {
   const user = await requireSession();
 
-  // Anything not yet closed is work. Verified and rejected reports are records.
-  const open = SAMPLE_INCIDENTS.filter(
-    (i) => !VERIFICATION_META[i.verification].mayUseWordVerified && i.verification !== 'rejected',
-  ).length;
+  /*
+   * Open work, counted by the server.
+   *
+   * `/editorial/queue` *is* the undecided set — the desk decides what is still
+   * work, and a client re-deriving that from a verification state would be
+   * offering a second opinion on the one judgement this console exists to
+   * record. A failed read shows no badge rather than zero: zero says the desk
+   * is clear, which is not something to assert on behalf of a silent backend.
+   */
+  const open = await editorial
+    .queue<unknown>()
+    .then((q) => q.length)
+    .catch(() => undefined);
 
   const items: NavItem[] = [
-    { href: '/editorial', label: 'Triage', icon: 'verify', count: open },
+    {
+      href: '/editorial',
+      label: 'Triage',
+      icon: 'verify',
+      ...(open === undefined ? {} : { count: open }),
+    },
     { href: '/editorial/decided', label: 'Decided', icon: 'history' },
   ];
 

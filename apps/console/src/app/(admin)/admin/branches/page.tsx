@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { BRANCHES, BUSINESSES, EMPLOYEES, roleCan } from '@dawuro/core';
+import { roleCan, type Branch, type OrganisationAccount, type Employee } from '@dawuro/core';
 import {
   Note,
   PageIntro,
@@ -11,11 +11,43 @@ import {
   Table,
 } from '@/components/admin/Widgets';
 import { requireSession } from '@/lib/session';
+import { Outage, load } from '@/components/ui';
+import { platform, org } from '@/lib/consoleApi';
 
 export default async function Page() {
   const session = await requireSession();
   if (!session.role || !roleCan(session.role, 'manage_branches')) redirect('/');
 
+  /*
+   * Branch coverage, live.
+   *
+   * The note below is the reason this page matters: assignment treats a branch
+   * radius as a hard limit, so a boundary drawn too tightly silently stops
+   * reports reaching anyone. Reading that from fixtures would show an operator
+   * a coverage map that is not the one doing the stopping.
+   */
+  const result = await load(async () => {
+    const [branches, employees, organisations] = await Promise.all([
+      org.branches<Branch>(),
+      org.employees<Employee>(),
+      platform.organisations<OrganisationAccount>().catch(() => [] as OrganisationAccount[]),
+    ]);
+    return { branches, employees, organisations };
+  });
+
+  if (!result.ok) {
+    return (
+      <PageShell>
+        <PageIntro
+          title="Branches"
+          blurb="Institution offices, depots and bureaux, and the area each covers."
+        />
+        <Outage error={result.error} retryHref="/admin/branches" />
+      </PageShell>
+    );
+  }
+
+  const { branches: BRANCHES, employees: EMPLOYEES, organisations: ORGANISATIONS } = result.data;
   const unassigned = EMPLOYEES.filter((e) => e.branchId === null);
   const avgRadius =
     BRANCHES.reduce((t, b) => t + b.jurisdictionRadiusM, 0) / Math.max(1, BRANCHES.length);
@@ -28,10 +60,12 @@ export default async function Page() {
       />
 
       <Note tone="warn">
-        <span className="font-semibold">These branches belong to the institutions, not to
-        Dawuro.</span> Their jurisdiction and staffing are the institution&rsquo;s to set. They
-        appear here because assignment treats a branch radius as a hard limit — a boundary drawn too
-        tightly is a boundary that silently stops reports reaching anyone.
+        <span className="font-semibold">
+          These branches belong to the institutions, not to Dawuro.
+        </span>{' '}
+        Their jurisdiction and staffing are the institution&rsquo;s to set. They appear here because
+        assignment treats a branch radius as a hard limit — a boundary drawn too tightly is a
+        boundary that silently stops reports reaching anyone.
       </Note>
 
       <StatGrid>
@@ -48,6 +82,7 @@ export default async function Page() {
 
       <Panel title="Branches" subtitle="Jurisdiction is a hard limit in assignment scoring.">
         <Table
+          empty="No branches yet. Institutions create their own; they appear once an organisation adds one."
           columns={['Branch', 'Organisation', 'Area', 'Radius', 'Staff', 'On duty']}
           rows={BRANCHES.map((b) => {
             const staff = EMPLOYEES.filter((e) => e.branchId === b.id);
@@ -57,7 +92,7 @@ export default async function Page() {
                 {b.name}
               </span>,
               <span key="o" className="text-xs text-text-muted">
-                {BUSINESSES.find((x) => x.id === b.businessId)?.name ?? b.businessId}
+                {ORGANISATIONS.find((x) => x.id === b.businessId)?.name ?? b.businessId}
               </span>,
               <span key="a" className="text-xs text-text-muted">
                 {b.areaLabel}

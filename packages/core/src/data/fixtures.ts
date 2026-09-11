@@ -1,4 +1,4 @@
-import type { Incident, IncidentCategory, TimePrecision } from '../types/api';
+import type { Incident, IncidentCategory, TimePrecision, NewsSection } from '../types/api';
 import { placeholderImage } from '../lib/placeholder';
 import { vettingStateFor, type AssuranceClass, type VerificationState } from '../types/assurance';
 import {
@@ -83,6 +83,14 @@ const VIDEO_CLIPS = [
 interface Seed {
   id: string;
   category: IncidentCategory;
+  /**
+   * The desk it ran on. Omitted means Ghana, which every incident report is —
+   * the other desks carry wire copy, and none of these seeds is wire copy.
+   *
+   * Mirrors the mobile fixture's default so a report looks the same in both
+   * clients.
+   */
+  section?: NewsSection;
   description: string;
   label: string | null;
   latitude: number | null;
@@ -236,6 +244,11 @@ export const SAMPLE_INCIDENTS: Incident[] = SEEDS.map((s, i) => {
     id: s.id,
     reportId: formatReportId(s.id),
     category: s.category,
+    section: s.section ?? 'ghana',
+    // Every seed here is a citizen incident report. The console's fixtures
+    // carry no wire copy — that comes from the agency's own desk, which has no
+    // simulated source in this repo.
+    origin: 'citizen_report',
     description: s.description,
     vettingState: vettingStateFor(verification),
     assurance,

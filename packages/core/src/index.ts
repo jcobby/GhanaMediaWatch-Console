@@ -1,10 +1,10 @@
 /**
- * Shared business rules for the Dawuro platform.
+ * Shared organisation rules for the Dawuro platform.
  *
  * Everything here is pure TypeScript with no React, React Native, Next.js or
  * DOM dependency, so the phone app and the web console compute identical
  * answers from identical inputs. That matters most for money: the commission a
- * reporter is quoted on their phone and the amount a business is billed in the
+ * reporter is quoted on their phone and the amount an organisation is billed in the
  * console are the same function, not two implementations that agree today.
  *
  * Rules that belong here: routing, commission, permissions, survey validation.
@@ -25,6 +25,10 @@ export {
   type PublicLocation,
   type PreciseLocation,
   type Publisher,
+  type ItemOrigin,
+  type NewsSection,
+  NEWS_SECTIONS,
+  NEWS_SECTION_LABEL,
   type DisplayFlags,
   type IncidentCounts,
   type Incident,
@@ -38,6 +42,7 @@ export {
   type Severity,
   type SeverityMeta,
   SEVERITY_META,
+  severityMeta,
   SEVERITIES,
   EMERGENCY_NUMBER,
   warnsAboutEmergencyServices,
@@ -56,12 +61,14 @@ export {
   type AssuranceClass,
   type AssuranceMeta,
   ASSURANCE_META,
+  assuranceMeta,
   type CaptureFacts,
   assuranceClass,
   failedChecks,
   type VerificationState,
   type VerificationMeta,
   VERIFICATION_META,
+  verificationMeta,
   VERIFICATION_STATES,
   canTransition,
   nextStates,
@@ -85,12 +92,12 @@ export {
   type AccountType,
   type SubmissionDestination,
   SUBMISSION_DESTINATIONS,
-  type BusinessSector,
+  type OrganisationSector,
   type SubscriptionTier,
   type BillingPeriod,
   type SubscriptionPlan,
   SUBSCRIPTION_PLANS,
-  type BusinessAccount,
+  type OrganisationAccount,
   type CommissionStatus,
   type CommissionEntry,
   type EarningsSummary,
@@ -101,11 +108,11 @@ export {
   formatCedis,
 } from './types/dawuro';
 
-// ─── business rules ────────────────────────────────────────────────────────
+// ─── organisation rules ────────────────────────────────────────────────────────
 
 export {
   type RoutableSubmission,
-  type BusinessWatchArea,
+  type OrganisationWatchArea,
   type RouteMatch,
   type RouteReason,
   canReceive,
@@ -183,6 +190,7 @@ export {
   type ResponseAction,
   type ResponseActionMeta,
   RESPONSE_META,
+  responseMeta,
   type ResponseEntry,
   latestResponse,
   isClosed,
@@ -215,6 +223,71 @@ export {
   hoursWaiting,
   triageScore,
 } from './logic/editorial';
+
+export {
+  // gates
+  type NewsGateId,
+  type NewsGate,
+  type GateVerdict,
+  type NewsGateAnswers,
+  NEWS_GATES,
+  GATES_UNANSWERED,
+  passesAllGates,
+  failedGates,
+  unansweredGates,
+  deriveGates,
+  // the weighted score
+  type NewsCriterionId,
+  type NewsCriterion,
+  type Rating,
+  type NewsRatings,
+  type NewsScore,
+  NEWS_CRITERIA,
+  NEUTRAL_RATING,
+  NEUTRAL_RATINGS,
+  SCORE_SCALE,
+  MAX_RAW_TOTAL,
+  MIN_PLAUSIBLE_MEDIA_BYTES,
+  scoreNews,
+  type CriterionContribution,
+  criterionContributions,
+  leadingReasons,
+  // modifiers and rules
+  type NewsModifierId,
+  type NewsModifier,
+  type NewsModifierFlags,
+  NEWS_MODIFIERS,
+  NO_MODIFIERS,
+  type ElectionFairnessInput,
+  applyElectionFairness,
+  needsSecondEditor,
+  // tiers
+  type NewsTier,
+  type NewsTierMeta,
+  NEWS_TIERS,
+  NEWS_TIER_META,
+  tierFor,
+  demoteTier,
+  // tie-breaks
+  type TieBreakReason,
+  type TieBreakCandidate,
+  type TieBreakOutcome,
+  TIE_BREAK_LABEL,
+  TIE_BREAK_WINDOW,
+  breakTie,
+  // Ghana's regions
+  type GhanaRegionId,
+  type GhanaRegion,
+  GHANA_REGIONS,
+  GHANA_REGION_META,
+  nearestRegion,
+  regionFromCoordinates,
+  // the score every report gets on arrival
+  type ProvisionalInput,
+  type ProvisionalAssessment,
+  DERIVABLE_CRITERIA,
+  provisionalAssessment,
+} from './logic/newsValue';
 
 export {
   inviteProblem,
@@ -282,6 +355,8 @@ export {
   formatCount,
   formatCoordinate,
   formatExactCapture,
+  formatCaptureDay,
+  formatPlace,
   formatFullTimestamp,
 } from './lib/format';
 
@@ -297,13 +372,13 @@ export {
   type DemoLogin,
   DEMO_LOGINS,
   findDemoLogin,
-  BUSINESSES,
+  ORGANISATIONS,
   EARNINGS_SUMMARY,
   COMMISSION_LEDGER,
   ROUTING_QUEUE,
   SURVEYS,
-  type BusinessApplication,
-  BUSINESS_APPLICATIONS,
+  type OrganisationApplication,
+  ORGANISATION_APPLICATIONS,
   type PayoutBatch,
   PAYOUT_BATCHES,
   PLATFORM_METRICS,
@@ -356,6 +431,11 @@ export {
 } from './types/roles';
 
 export type { NavIconName, NavItem, NavSection } from './types/nav';
-export { navigationFor, reachableHrefs } from './logic/navigation';
+export {
+  navigationFor,
+  reachableHrefs,
+  organisationNavigation,
+  organisationHrefs,
+} from './logic/navigation';
 
 export { ROLE_LOGINS, ALL_DEMO_LOGINS } from './data/dawuroData';

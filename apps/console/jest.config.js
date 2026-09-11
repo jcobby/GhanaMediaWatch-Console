@@ -20,5 +20,14 @@ module.exports = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
     '^@dawuro/core$': '<rootDir>/../../packages/core/src/index.ts',
+    /*
+     * `server-only` exists only inside Next's bundler graph, so importing a
+     * module that declares it fails to resolve under Jest. Stubbed rather than
+     * removed from the source: it is what stops a module holding applicants'
+     * emails and phone numbers from ever being pulled into client JavaScript,
+     * and dropping it to make a test run would trade a real protection for a
+     * config line.
+     */
+    '^server-only$': '<rootDir>/src/__mocks__/server-only.ts',
   },
 };

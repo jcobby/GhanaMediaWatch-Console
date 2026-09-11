@@ -75,6 +75,7 @@ export default async function Page() {
         subtitle="A verify-only key is retired for signing but still needed — it is the only thing that can check what it signed."
       >
         <Table
+          empty="No signing keys yet. Keys are provisioned with the service, not from this screen."
           columns={['Key', 'Purpose', 'Algorithm', 'Rotated', 'Signed', 'State']}
           rows={KEYS.map((k) => [
             <code key="k" className="text-xs text-text-primary">

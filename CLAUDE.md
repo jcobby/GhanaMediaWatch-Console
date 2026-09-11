@@ -18,8 +18,24 @@ reporter who signs in here lands on `/no-console`, which explains why.
 Expo mobile app: `c:\Users\Softmasters\Desktop\GhanaMediaWatch`
 
 It holds the design tokens (`global.css`, `tailwind.config.js`, `src/lib/theme.ts`), the
-API contract (`API_CONTRACT.md`, 19 endpoints), and the original home of the shared logic.
-Read it before making decisions that must match. **Do not duplicate its logic — share it.**
+API contract (`API_CONTRACT.md`, plus `BACKEND_SPEC.md` which supersedes it), and the
+original home of the shared logic. Read it before making decisions that must match.
+**Do not duplicate its logic — share it.**
+
+### Hand-synced across both repos
+
+`NewsSection` is declared twice — here in `packages/core/src/types/api.ts` and on the phone
+in `src/types/sections.ts` — because the mobile app does not consume `@dawuro/core`. The
+values **and their order** must stay identical; `packages/core/src/__tests__/sections.test.ts`
+pins them, and mobile's `src/features/feed/__tests__/sections.test.ts` pins the other side.
+A desk added to one and not the other gives a tab that exists in one client and not the
+other, which reads as data loss.
+
+**A desk is not a category.** `category` is filed by the reporter and decides routing,
+commission and the editorial queue; `section` is chosen by an editor at release and decides
+only where the story appears. Never derive one from the other. A report released with no
+desk does not appear in the mobile feed at all — silently, with no error — which is why
+`/published` makes the desk part of the release rather than a setting elsewhere.
 
 ## Layout
 
@@ -76,19 +92,56 @@ npm test           # core's 81 tests
 
 `apps/console/.env.local` needs `SESSION_SECRET` (32+ chars). See `.env.example`.
 
-## Demo accounts
+## Accounts
 
-Password for all: `dawuro`. Platform operators also need access code `DAWURO-2026`.
+Sign-in goes to the live backend (`POST /auth/login`, email + password). The seeded demo
+accounts no longer work — they do not exist on the server. `/login` still lists the roles,
+labelled as a reference rather than as logins.
 
-- `ops@ama.gov.gh` — business, inbox near its monthly allowance
-- `newsroom@joynews.gh` — business, media house
-- `owner@dawuro.gh` — platform operator
-- `ama@example.gh` — reporter, lands on `/no-console` by design
+**Never authenticate through `POST /auth/signin`.** It takes an email with no password and
+mints a token for whoever asks. It is used nowhere in this console, and using it for a
+sign-in would mean anyone who knows an operator's address can release payouts.
+
+Organisation and platform roles are granted server-side; there is no self-service path to
+them, so a fresh account is a reporter and lands on `/no-console`.
 
 ## State
 
-Built: shared core, auth and role gating, both shells, the business inbox, the routing
-desk, the platform console.
+**Reads are wired; writes are not.** Every page reads the API through
+`src/lib/consoleApi.ts`, catches failure with `load()` and renders `<Outage>`.
+There is no fixture fallback anywhere in `src/app`.
 
-Stubbed: `/published`, `/surveys`, `/team`, `/account`, `/platform/approvals`,
-`/platform/payouts`, `/platform/businesses`.
+Only three things write: sign-in, registration, and the routing desk
+(`/api/routing/[incidentId]` — route, or release to the public feed). Every
+other action button is React state: the row moves and nothing is sent. Those
+screens carry `<NotWired>`, and `src/__tests__/wiring.test.ts` fails if a
+consequential screen neither saves nor warns — or still warns after it starts
+saving.
+
+Verified against the live backend: sign-in, registration, `/me/*`, the public
+directory, `/verify`, and the routing desk's own guards. Everything under
+`/org`, `/platform` and `/editorial` is unverified — no account this machine can
+create holds those roles, so they have only been exercised against a backend
+that refuses them, where they correctly render the outage.
+
+### Known backend gaps
+
+- **No endpoint creates an organisation.** `/auth/register` makes a reporter
+  account; every `/org/*` route needs membership; `/platform/applications` only
+  lists and decides. So registration cannot complete, nothing routes (there is
+  nobody to route to), and `/onboarding` says so instead of collecting company
+  documents into nothing.
+- **`POST /auth/signin` takes an email with no password** and mints a token for
+  whoever asks. Never authenticate through it.
+- No endpoint describes the caller — no `GET /me`, and the token carries no org
+  or role. `lib/auth.ts` infers the account type by probing two reads; delete
+  `describeCaller` when a real one lands.
+- `/platform/routing`, `/editorial/queue` and `/org/inbox` publish **no response
+  schema**. `lib/collection.ts` reads any unambiguous wrapper and throws on one
+  it cannot, so a shape mismatch can never render as an empty queue;
+  `lib/normaliseRouting.ts` reconciles the incident vocabulary the routing queue
+  actually returns with the `RoutingItem` the desk expects.
+- `/platform/routing/{id}/recipients` and `/editorial/{id}/transition` document
+  no request body. The desk sends its best reading and shows the server's own
+  error, because that error is the only specification available.
+- No platform metrics endpoint, no public `GET /invites/{token}`.

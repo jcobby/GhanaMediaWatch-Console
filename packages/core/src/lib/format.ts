@@ -68,6 +68,67 @@ export function formatExactCapture(iso: string | null, precision: TimePrecision)
 }
 
 /**
+ * The day something was captured, for a group heading.
+ *
+ * `formatExactCapture` is the wrong tool for one: it carries a time, so twelve
+ * reports filmed on the same afternoon produce twelve different headings and
+ * the grouping disappears. This is deliberately coarse — the whole point is
+ * that many reports share one value.
+ *
+ * Today and Yesterday are named. A desk works the last two days far more than
+ * any other, and "8 Sep" makes somebody do the arithmetic every time.
+ */
+export function formatCaptureDay(iso: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  if (isToday(date)) return 'Today';
+  if (isYesterday(date)) return 'Yesterday';
+  return isThisYear(date) ? format(date, 'd MMM') : format(date, 'd MMM yyyy');
+}
+
+/**
+ * Where it was filmed, in whatever terms are available.
+ *
+ * The service resolves `label` for nothing it holds — every incident comes back
+ * `"label": null` — while carrying the fix that produced it. Reading the label
+ * alone therefore prints nothing about the location of footage whose entire
+ * claim is that it was taken somewhere specific, and a desk cannot tell that
+ * from a reporter who withheld it. Those are opposite facts and had one
+ * appearance.
+ *
+ * Coordinates are a worse name than "Kaneshie, Accra" and a far better one than
+ * silence: they can be read out, pasted into a map, and checked. Four decimals
+ * is about eleven metres — the accuracy a phone fix actually has.
+ *
+ * Hemisphere letters rather than a signed number: Ghana sits either side of the
+ * prime meridian, and `-0.218` reads as a typo where `0.2180° W` does not.
+ *
+ * Null when there is no fix either, which is how a suppressed location arrives
+ * — so absence stays absence and is never labelled as withheld.
+ *
+ * **Hand-synced with `formatCoordinates` in the mobile app's `lib/format`.**
+ * The app does not consume this package (see `NewsSection`), and the two
+ * disagreeing would put one place name on the phone and another on the desk for
+ * the same report.
+ */
+export function formatPlace(
+  location: { latitude: number | null; longitude: number | null; label?: string | null } | null,
+): string | null {
+  if (!location) return null;
+  const label = location.label?.trim();
+  if (label) return label;
+
+  const { latitude, longitude } = location;
+  if (typeof latitude !== 'number' || typeof longitude !== 'number') return null;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+  const ns = latitude >= 0 ? 'N' : 'S';
+  const ew = longitude >= 0 ? 'E' : 'W';
+  return `${Math.abs(latitude).toFixed(4)}° ${ns}, ${Math.abs(longitude).toFixed(4)}° ${ew}`;
+}
+
+/**
  * Full timestamp for the detail view and any evidence context — seconds and
  * timezone included, because a report used to dispatch a patrol needs to be
  * unambiguous about when it was taken.

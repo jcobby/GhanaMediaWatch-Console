@@ -97,6 +97,30 @@ export interface ResponseEntry {
 }
 
 /** The most recent action, or null if nobody has touched it. */
+/**
+ * The response meta for an action that came off the wire.
+ *
+ * `RESPONSE_META[action]` is a `Record<ResponseAction, …>`, and an action on a
+ * response is whatever the organisation's console recorded — which may be a
+ * value shipped after this client. See `verificationMeta` for the failure this
+ * prevents.
+ *
+ * The fallback is non-terminal and notifies nobody: an action this client
+ * cannot read must not close a case, and must not be reported to a reporter as
+ * something that happened when nobody here knows what it was.
+ */
+export function responseMeta(action: string | null | undefined): ResponseActionMeta {
+  return RESPONSE_META[action as ResponseAction] ?? UNRECOGNISED_RESPONSE;
+}
+
+const UNRECOGNISED_RESPONSE: ResponseActionMeta = {
+  label: 'Unrecognised action',
+  description: 'This console does not know this response action.',
+  terminal: false,
+  notifiesReporter: false,
+  hue: '#64748b',
+};
+
 export function latestResponse(entries: ResponseEntry[]): ResponseEntry | null {
   if (entries.length === 0) return null;
   return [...entries].sort((a, b) => Date.parse(b.atIso) - Date.parse(a.atIso))[0]!;
@@ -105,7 +129,7 @@ export function latestResponse(entries: ResponseEntry[]): ResponseEntry | null {
 /** Whether this case is finished. */
 export function isClosed(entries: ResponseEntry[]): boolean {
   const latest = latestResponse(entries);
-  return latest ? RESPONSE_META[latest.action].terminal : false;
+  return latest ? responseMeta(latest.action).terminal : false;
 }
 
 /**
@@ -118,7 +142,7 @@ export function canRecordResponse(entries: ResponseEntry[], action: ResponseActi
   const latest = latestResponse(entries);
   if (!latest) return true;
   if (latest.action === action) return false;
-  if (RESPONSE_META[latest.action].terminal) {
+  if (responseMeta(latest.action).terminal) {
     // Reopening means going back to active work, not to another ending.
     return !RESPONSE_META[action].terminal;
   }

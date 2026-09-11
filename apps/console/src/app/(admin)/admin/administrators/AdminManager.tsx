@@ -39,15 +39,69 @@ interface Person {
 }
 
 const SEED: Person[] = [
-  { id: 'p1', name: 'Ama Serwaa', email: 'super.admin@dawuro.gh', role: 'super_admin', addedBy: '—' },
-  { id: 'p2', name: 'Kofi Mensah', email: 'dawuro.admin@dawuro.gh', role: 'dawuro_admin', addedBy: 'Ama Serwaa' },
-  { id: 'p3', name: 'Yaw Boateng', email: 'system.admin@dawuro.gh', role: 'system_admin', addedBy: 'Ama Serwaa' },
-  { id: 'p4', name: 'Akosua Danso', email: 'hr.admin@dawuro.gh', role: 'hr_admin', addedBy: 'Ama Serwaa' },
-  { id: 'p5', name: 'Kwabena Owusu', email: 'operations@dawuro.gh', role: 'operations', addedBy: 'Ama Serwaa' },
-  { id: 'p6', name: 'Efua Asante', email: 'branch.manager@dawuro.gh', role: 'branch_manager', addedBy: 'Kwabena Owusu' },
-  { id: 'p7', name: 'Nana Adjei', email: 'compliance.officer@dawuro.gh', role: 'compliance_officer', addedBy: 'Ama Serwaa' },
-  { id: 'p8', name: 'Abena Frimpong', email: 'finance.officer@dawuro.gh', role: 'finance_officer', addedBy: 'Ama Serwaa' },
-  { id: 'p9', name: 'Kwame Antwi', email: 'auditor@dawuro.gh', role: 'auditor', addedBy: 'Ama Serwaa' },
+  {
+    id: 'p1',
+    name: 'Ama Serwaa',
+    email: 'super.admin@dawuro.gh',
+    role: 'super_admin',
+    addedBy: '—',
+  },
+  {
+    id: 'p2',
+    name: 'Kofi Mensah',
+    email: 'dawuro.admin@dawuro.gh',
+    role: 'dawuro_admin',
+    addedBy: 'Ama Serwaa',
+  },
+  {
+    id: 'p3',
+    name: 'Yaw Boateng',
+    email: 'system.admin@dawuro.gh',
+    role: 'system_admin',
+    addedBy: 'Ama Serwaa',
+  },
+  {
+    id: 'p4',
+    name: 'Akosua Danso',
+    email: 'hr.admin@dawuro.gh',
+    role: 'hr_admin',
+    addedBy: 'Ama Serwaa',
+  },
+  {
+    id: 'p5',
+    name: 'Kwabena Owusu',
+    email: 'operations@dawuro.gh',
+    role: 'operations',
+    addedBy: 'Ama Serwaa',
+  },
+  {
+    id: 'p6',
+    name: 'Efua Asante',
+    email: 'branch.manager@dawuro.gh',
+    role: 'branch_manager',
+    addedBy: 'Kwabena Owusu',
+  },
+  {
+    id: 'p7',
+    name: 'Nana Adjei',
+    email: 'compliance.officer@dawuro.gh',
+    role: 'compliance_officer',
+    addedBy: 'Ama Serwaa',
+  },
+  {
+    id: 'p8',
+    name: 'Abena Frimpong',
+    email: 'finance.officer@dawuro.gh',
+    role: 'finance_officer',
+    addedBy: 'Ama Serwaa',
+  },
+  {
+    id: 'p9',
+    name: 'Kwame Antwi',
+    email: 'auditor@dawuro.gh',
+    role: 'auditor',
+    addedBy: 'Ama Serwaa',
+  },
 ];
 
 export function AdminManager({ actorName }: { actorName: string }) {
@@ -216,8 +270,8 @@ export function AdminManager({ actorName }: { actorName: string }) {
       </Note>
 
       <Note>
-        Changes here are not saved. There is no backend to write them to, so this demonstrates the
-        rules rather than applying them — reload and the list returns to its seeded state.
+        Changes here are not saved yet. This screen shows how administrators will be managed, and
+        the rules rather than applying them — reload and the list returns to its seeded state.
       </Note>
     </>
   );

@@ -10,7 +10,7 @@ import { cn } from '@/lib/cn';
 interface DemoAccount {
   email: string;
   displayName: string;
-  accountType: 'business' | 'platform_owner' | 'editor' | 'reporter';
+  accountType: 'organisation' | 'platform_owner' | 'editor' | 'reporter';
   showcases: string;
   /** The role's own label, when this account exists to demonstrate one. */
   roleLabel?: string;
@@ -29,7 +29,7 @@ export interface DemoGroup {
  * The sign-in form.
  *
  * The access-code field is revealed rather than always shown: most people
- * signing in are business users who do not have one, and a permanently visible
+ * signing in are organisation users who do not have one, and a permanently visible
  * field they must ignore makes the form look harder than it is. The server
  * tells us when it is needed.
  */
@@ -125,6 +125,22 @@ export function LoginForm({ groups, demoPassword }: { groups: DemoGroup[]; demoP
             hint="Platform operators are issued this separately."
             autoComplete="one-time-code"
           />
+        ) : null}
+
+        {/*
+          Why they are back here.
+
+          Being bounced to a login screen with no explanation reads as the app
+          having lost their work. This one is specifically the case where the
+          session could not be renewed — they did nothing wrong and nothing was
+          lost, and saying so is the difference between "sign in again" and
+          "something is broken".
+        */}
+        {!error && params.get('reason') === 'expired' ? (
+          <div className="rounded-sm bg-canvas-raise px-3 py-2 text-xs leading-relaxed text-text-muted">
+            Your session expired, so you were signed out. Nothing has been lost — sign in to pick up
+            where you left off.
+          </div>
         ) : null}
 
         {error ? (
@@ -234,8 +250,21 @@ export function LoginForm({ groups, demoPassword }: { groups: DemoGroup[]; demoP
           ),
         )}
 
-        <p className="text-2xs text-text-faint">
-          Password for all demo accounts: <span className="font-mono">{demoPassword}</span>
+        {/*
+          These no longer sign anybody in.
+
+          Sign-in goes to the live backend now, and none of these seeded
+          addresses exist there — so a click prefills the form and the server
+          rejects it. The list is kept because it is the clearest statement of
+          what roles the console has, and picking one still shows you which
+          shell you would land in. Saying so is the difference between a
+          reference list and a dead end somebody spends ten minutes on.
+        */}
+        <p className="text-2xs leading-relaxed text-text-faint">
+          These are the roles the console supports, not working logins. Sign-in is checked against
+          the live service, where these seeded accounts do not exist — ask an administrator to
+          create yours. The old shared password <span className="font-mono">{demoPassword}</span> is
+          no longer accepted.
         </p>
       </div>
     </div>

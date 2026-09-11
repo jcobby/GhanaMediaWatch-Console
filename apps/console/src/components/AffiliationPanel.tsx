@@ -4,7 +4,7 @@ import { ArrowRight, Building2, Eye, EyeOff, Handshake } from 'lucide-react';
 import {
   formatRelativeTime,
   type AffiliationKind,
-  type BusinessAccount,
+  type OrganisationAccount,
   type OrgAffiliation,
 } from '@dawuro/core';
 import { Badge, Panel } from '@/components/ui';
@@ -30,13 +30,13 @@ const KIND_LABEL: Record<AffiliationKind, string> = {
 export function AffiliationPanel({
   businessId,
   affiliations,
-  businesses,
+  organisations,
 }: {
   businessId: string;
   affiliations: OrgAffiliation[];
-  businesses: BusinessAccount[];
+  organisations: OrganisationAccount[];
 }) {
-  const nameOf = (id: string) => businesses.find((b) => b.id === id)?.name ?? id;
+  const nameOf = (id: string) => organisations.find((b) => b.id === id)?.name ?? id;
 
   const mine = affiliations.filter(
     (a) => a.parentBusinessId === businessId || a.affiliateBusinessId === businessId,

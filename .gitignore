@@ -18,3 +18,11 @@ Thumbs.db
 coverage/
 .vscode/
 .idea/
+
+# Applications the console holds until the backend can accept them, plus
+# temporary captured API payloads. Real submitted data — never commit it.
+.data/
+
+# An isolated build dir, used to run a second instance beside a live dev
+# server without corrupting it. See DAWURO_DIST_DIR in apps/console/next.config.ts.
+.next-probe/

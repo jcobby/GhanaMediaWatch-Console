@@ -24,7 +24,7 @@ const STATUS: Record<
 /**
  * Releasing what reporters have earned.
  *
- * This is the only screen in the console that moves money out of the business,
+ * This is the only screen in the console that moves money out of the organisation,
  * and the one where a mistake is hardest to undo — a payout that has left is
  * gone, and the person on the other end of it filmed a fire for ₵25.
  *

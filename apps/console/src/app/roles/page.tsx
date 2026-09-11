@@ -38,8 +38,7 @@ export default function Page() {
         <p className="text-xs leading-relaxed text-text-secondary">
           <span className="font-semibold">This screen is a simulation.</span> In production a role
           comes from the account and nobody chooses their own — it exists so the whole product can
-          be walked through without twenty sets of credentials. It disappears when the backend
-          lands.
+          be walked through without twenty sets of credentials. It will be removed before launch.
         </p>
       </div>
 

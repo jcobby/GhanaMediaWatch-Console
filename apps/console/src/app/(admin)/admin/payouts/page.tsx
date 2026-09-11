@@ -1,11 +1,10 @@
 import { redirect } from 'next/navigation';
 import {
-  COMMISSION_LEDGER,
-  EARNINGS_SUMMARY,
-  PAYOUT_BATCHES,
   PLATFORM_FEE_RATE,
   formatCedis,
   roleCan,
+  type CommissionEntry,
+  type PayoutBatch,
 } from '@dawuro/core';
 import {
   Bar,
@@ -22,6 +21,11 @@ import {
 import { RowAction } from '@/components/admin/RowAction';
 import { requireSession } from '@/lib/session';
 
+/** The floor a balance must clear to be paid. Mirrors the phone's own copy. */
+const PAYOUT_THRESHOLD_PESEWAS = 10_000;
+import { NotWired, Outage, load } from '@/components/ui';
+import { platform } from '@/lib/consoleApi';
+
 /** Where reporters are paid. Mobile money is how Ghana pays. */
 const DESTINATIONS = [
   { name: 'MTN MoMo', share: 0.68 },
@@ -34,6 +38,37 @@ export default async function Page() {
   const session = await requireSession();
   if (!session.role || !roleCan(session.role, 'run_payouts')) redirect('/');
 
+  /*
+   * Money owed to reporters.
+   *
+   * The single most dangerous page to serve from fixtures: an operator reading
+   * a seeded draft batch would press release against amounts nobody earned.
+   * Every figure below is integer pesewas exactly as the API reports them.
+   */
+  const result = await load(async () => {
+    const batches = await platform.payouts<PayoutBatch>();
+    return {
+      batches,
+      // Commission lines where a batch embeds them. A batch that does not
+      // contributes none rather than an invented ledger.
+      ledger: batches.flatMap(
+        (b) => (b as PayoutBatch & { entries?: CommissionEntry[] }).entries ?? [],
+      ),
+    };
+  });
+
+  if (!result.ok) {
+    return (
+      <PageShell>
+        <PageIntro title="Payouts" blurb="What reporters are owed, and releasing it." />
+        <NotWired what="Releasing a payout" />
+        <Outage error={result.error} retryHref="/admin/payouts" />
+      </PageShell>
+    );
+  }
+
+  const PAYOUT_BATCHES = result.data.batches;
+  const COMMISSION_LEDGER = result.data.ledger;
   const draft = PAYOUT_BATCHES.find((b) => b.status === 'draft');
   const earned = COMMISSION_LEDGER.filter((c) => c.status === 'earned');
   const owed = earned.reduce((t, c) => t + c.amountPesewas, 0);
@@ -64,6 +99,7 @@ export default async function Page() {
 
       <Panel title="Batches" subtitle="A batch is released once, and never recomputed afterwards.">
         <Table
+          empty="No payouts yet. A batch appears once reporters have earned enough to clear the payout floor."
           columns={['Batch', 'Reporters', 'Total', 'Created', 'Settled', 'State', '']}
           rows={PAYOUT_BATCHES.map((b) => [
             <code key="i" className="text-xs text-text-primary">
@@ -108,17 +144,23 @@ export default async function Page() {
           subtitle="A reporter is paid once they clear the floor, so small balances do not cost more in fees than they carry."
         >
           <div className="space-y-3">
-            <Bar
-              label="Typical reporter balance"
-              value={EARNINGS_SUMMARY.pendingPesewas}
-              max={EARNINGS_SUMMARY.payoutThresholdPesewas}
-              display={`${formatCedis(EARNINGS_SUMMARY.pendingPesewas)} of ${formatCedis(EARNINGS_SUMMARY.payoutThresholdPesewas)}`}
-              tone="warn"
-            />
+            {/*
+              The policy, without a fabricated example.
+
+              This showed a "typical reporter balance" bar drawn from a seeded
+              earnings summary. There is no platform-wide earnings endpoint —
+              `/me/earnings` is the caller's own balance, which for an operator
+              is not a reporter's and is not typical of anything — so the bar
+              was an invented statistic sitting on the page where payouts are
+              released. The rule it illustrated is real and stays.
+            */}
             <p className="text-xs leading-relaxed text-text-muted">
-              Below {formatCedis(EARNINGS_SUMMARY.payoutThresholdPesewas)} the balance rolls into
-              the next run rather than being sent. The reporter sees this on their phone, so it is
-              never a surprise.
+              Below {formatCedis(PAYOUT_THRESHOLD_PESEWAS)} a reporter&rsquo;s balance rolls into
+              the next run rather than being sent, so a small balance does not cost more in fees
+              than it carries. The reporter sees this on their phone, so it is never a surprise.
+            </p>
+            <p className="text-2xs text-text-faint">
+              A breakdown of reporter balances is not available yet.
             </p>
           </div>
         </Panel>
@@ -168,8 +210,8 @@ export default async function Page() {
 
       <Note>
         Every figure here is an integer number of pesewas. Rates change; a settled amount does not —
-        it is fixed the moment a business licenses the report, and recomputing it later would mean a
-        reporter&rsquo;s past earnings quietly moved.
+        it is fixed the moment an organisation licenses the report, and recomputing it later would
+        mean a reporter&rsquo;s past earnings quietly moved.
       </Note>
     </PageShell>
   );

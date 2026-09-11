@@ -8,9 +8,32 @@ import {
 } from '../logic/billing';
 import { SUBSCRIPTION_PLANS } from '../types/dawuro';
 
-const basic = planFor('basic');
-const standard = planFor('standard');
-const enterprise = planFor('enterprise');
+/*
+ * `planFor` is nullable, because against the live service the tier is often
+ * absent and the lookup genuinely fails — it took the inbox down. Asserted once
+ * here so the rest of the file reads as arithmetic rather than as null checks,
+ * and so a tier disappearing from the table fails loudly at the top.
+ */
+const basic = planFor('basic')!;
+const standard = planFor('standard')!;
+const enterprise = planFor('enterprise')!;
+
+it('has a plan for every tier it claims to price', () => {
+  expect([basic, standard, enterprise].every(Boolean)).toBe(true);
+});
+
+it('answers null for a tier it does not know', () => {
+  /*
+   * The case that crashed the inbox: `SUBSCRIPTION_PLANS[undefined]` is
+   * `undefined`, and the first thing to read a price off it threw. A null says
+   * so, and the type makes every caller decide what to show instead — which on
+   * a page quoting a charge is a decision worth forcing.
+   */
+  expect(planFor(undefined)).toBeNull();
+  expect(planFor(null)).toBeNull();
+  expect(planFor('platinum')).toBeNull();
+  expect(planFor(3)).toBeNull();
+});
 
 describe('plan shapes', () => {
   it('meters the two subscription tiers and not the annual one', () => {

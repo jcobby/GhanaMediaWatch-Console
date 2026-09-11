@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, ArrowRight, Building2, Check, Clock, Search } from 'lucide-react';
-import type { Branch, BusinessAccount } from '@dawuro/core';
+import type { Branch, OrganisationAccount } from '@dawuro/core';
 import { Button, Field, Panel } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
@@ -21,10 +21,10 @@ type Step = 'stance' | 'organisation' | 'details' | 'sent';
  * who reviews the request — depends on that choice.
  */
 export function JoinForm({
-  businesses,
+  organisations,
   branchesByBusiness,
 }: {
-  businesses: BusinessAccount[];
+  organisations: OrganisationAccount[];
   branchesByBusiness: Record<string, Branch[]>;
 }) {
   const [step, setStep] = useState<Step>('stance');
@@ -40,16 +40,16 @@ export function JoinForm({
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const business = businesses.find((b) => b.id === businessId) ?? null;
+  const organisation = organisations.find((b) => b.id === businessId) ?? null;
   const branches = businessId ? (branchesByBusiness[businessId] ?? []) : [];
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return businesses;
-    return businesses.filter(
+    if (!q) return organisations;
+    return organisations.filter(
       (b) => b.name.toLowerCase().includes(q) || b.sector.toLowerCase().includes(q),
     );
-  }, [query, businesses]);
+  }, [query, organisations]);
 
   const detailsValid =
     displayName.trim().length > 1 && /.+@.+\..+/.test(email) && statedRole.trim().length > 1;
@@ -71,8 +71,8 @@ export function JoinForm({
         </div>
         <h2 className="mt-5 text-xl font-semibold">Request sent</h2>
         <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-text-muted">
-          {business?.name} has been asked to confirm that you work there. Someone with admin access
-          will accept or decline it.
+          {organisation?.name} has been asked to confirm that you work there. Someone with admin
+          access will accept or decline it.
         </p>
         <p className="mx-auto mt-4 flex max-w-md items-start gap-2 rounded-sm bg-canvas-raise px-3 py-2.5 text-left text-xs leading-relaxed text-text-muted">
           <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-faint" />
@@ -240,7 +240,7 @@ export function JoinForm({
           <div>
             <h2 className="text-sm font-semibold">Your details</h2>
             <p className="mt-1 text-xs text-text-muted">
-              Joining <span className="font-medium text-text-primary">{business?.name}</span>
+              Joining <span className="font-medium text-text-primary">{organisation?.name}</span>
             </p>
           </div>
 

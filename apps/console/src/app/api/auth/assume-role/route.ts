@@ -58,7 +58,7 @@ export async function POST(request: Request) {
         ? 'editor'
         : role === 'reporter'
           ? 'reporter'
-          : 'business',
+          : 'organisation',
     role,
     title: meta.label,
     businessId: isAdminRole(role) ? undefined : 'biz_ama',

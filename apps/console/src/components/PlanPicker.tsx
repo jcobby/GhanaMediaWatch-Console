@@ -42,7 +42,9 @@ export function PlanPicker({
   expectedMonthlyDownloads?: number;
 }) {
   const perYear = Math.max(0, Math.round(expectedMonthlyDownloads)) * 12;
-  const unlimited = planFor('enterprise');
+  // A literal tier, so the table always has it — unlike an organisation's own
+  // tier, which arrives from the network and often does not.
+  const unlimited = planFor('enterprise')!;
 
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -101,7 +103,7 @@ export function PlanPicker({
                 <span>
                   {uncapped
                     ? 'Unlimited downloads'
-                    : `${formatCedis(downloadCharge(plan))} per download`}
+                    : `${formatCedis(downloadCharge(plan) ?? 0)} per download`}
                 </span>
               </li>
               <li className="flex items-start gap-1.5">

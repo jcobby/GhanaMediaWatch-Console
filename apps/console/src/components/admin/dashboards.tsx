@@ -1,22 +1,11 @@
 import {
-  BRANCHES,
-  BUSINESSES,
-  COMMISSION_LEDGER,
-  EDITORIAL_CASES,
-  EMPLOYEES,
-  INVITES,
-  MEMBERSHIP_REQUESTS,
-  ONBOARDING_APPLICATIONS,
-  ORG_AFFILIATIONS,
-  PAYOUT_BATCHES,
-  ROUTING_QUEUE,
-  SAMPLE_INCIDENTS,
   SUBSCRIPTION_PLANS,
   ROLE_META,
   ADMIN_ROLES,
   formatCedis,
   type AdminRole,
 } from '@dawuro/core';
+import type { AdminData } from '@/lib/consoleApi';
 import { Feed, Note, Panel, Pill, RoleIntro, Stat, StatGrid, Table } from './Widgets';
 import { RowAction, RowActions } from './RowAction';
 
@@ -42,20 +31,23 @@ function intro(role: AdminRole) {
 
 // ─── super admin ───────────────────────────────────────────────────────────
 
-function SuperAdmin() {
-  const pendingApplications = ONBOARDING_APPLICATIONS.filter((a) => !a.approvedAtIso).length;
-  const owed = COMMISSION_LEDGER.filter((c) => c.status === 'earned').reduce(
-    (t, c) => t + c.amountPesewas,
-    0,
-  );
+function SuperAdmin({ data }: { data: AdminData }) {
+  const pendingApplications = data.applications.filter((a) => !a.approvedAtIso).length;
+  const owed = data.commissions
+    .filter((c) => c.status === 'earned')
+    .reduce((t, c) => t + c.amountPesewas, 0);
 
   return (
     <>
       {intro('super_admin')}
 
       <StatGrid>
-        <Stat label="Institutions" value={String(BUSINESSES.length)} hint="Subscribing accounts" />
-        <Stat label="Staff" value={String(EMPLOYEES.length)} hint="Across all branches" />
+        <Stat
+          label="Institutions"
+          value={String(data.organisations.length)}
+          hint="Subscribing accounts"
+        />
+        <Stat label="Staff" value={String(data.employees.length)} hint="Across all branches" />
         <Stat
           label="Awaiting approval"
           value={String(pendingApplications)}
@@ -121,8 +113,8 @@ function SuperAdmin() {
 
 // ─── global connect admin ──────────────────────────────────────────────────
 
-function DawuroAdmin() {
-  const usable = INVITES.filter((i) => !i.revokedAtIso).length;
+function DawuroAdmin({ data }: { data: AdminData }) {
+  const usable = data.invites.filter((i) => !i.revokedAtIso).length;
 
   return (
     <>
@@ -131,12 +123,16 @@ function DawuroAdmin() {
       <StatGrid>
         <Stat
           label="Affiliations"
-          value={String(ORG_AFFILIATIONS.length)}
+          value={String(data.affiliations.length)}
           hint="Directional links"
         />
         <Stat label="Live invites" value={String(usable)} hint="Not revoked or expired" />
         <Stat label="Agents" value="34" hint="Reporting under an institution" />
-        <Stat label="Partner orgs" value={String(BUSINESSES.length)} hint="In the network" />
+        <Stat
+          label="Partner orgs"
+          value={String(data.organisations.length)}
+          hint="In the network"
+        />
       </StatGrid>
 
       <Panel
@@ -145,12 +141,13 @@ function DawuroAdmin() {
       >
         <Table
           columns={['From', 'To', 'Kind', 'Grants']}
-          rows={ORG_AFFILIATIONS.slice(0, 8).map((a) => [
+          rows={data.affiliations.slice(0, 8).map((a) => [
             <span key="f" className="font-medium text-text-primary">
-              {BUSINESSES.find((b) => b.id === a.parentBusinessId)?.name ?? a.parentBusinessId}
+              {data.organisations.find((b) => b.id === a.parentBusinessId)?.name ??
+                a.parentBusinessId}
             </span>,
             <span key="t" className="text-text-secondary">
-              {BUSINESSES.find((b) => b.id === a.affiliateBusinessId)?.name ??
+              {data.organisations.find((b) => b.id === a.affiliateBusinessId)?.name ??
                 a.affiliateBusinessId}
             </span>,
             <Pill key="k" tone="info">
@@ -170,7 +167,7 @@ function DawuroAdmin() {
       <Panel title="Invite links" subtitle="What each one grants, and how much of it is left.">
         <Table
           columns={['Token', 'Kind', 'Used', 'State']}
-          rows={INVITES.slice(0, 6).map((i) => [
+          rows={data.invites.slice(0, 6).map((i) => [
             <code key="l" className="text-xs text-text-primary">
               {i.token.slice(0, 10)}…
             </code>,
@@ -206,14 +203,17 @@ function SystemAdmin() {
       {/*
         No uptime, throughput or storage figures.
 
-        There is no backend yet to measure, so any number here would be
-        invented — and an invented figure on an operations screen is the kind
-        of thing someone repeats in a meeting as though it were measured.
+        The backend exists now, but exposes nothing that measures it — no
+        metrics, health or capacity endpoint. Any number here would still be
+        invented, and an invented figure on an operations screen is the kind of
+        thing someone repeats in a meeting as though it were measured.
+
+        This component takes no data for that reason: there is none to take.
       */}
       <Note tone="warn">
-        <span className="font-semibold">Nothing is running to measure yet.</span> This desk
-        configures the platform rather than watching it. Uptime, upload throughput and storage
-        appear here once there is a server behind them.
+        <span className="font-semibold">There is nothing to measure this against yet.</span> This
+        desk configures the platform rather than watching it. Uptime, upload throughput and storage
+        appear here once the service reports them.
       </Note>
 
       <Panel
@@ -272,17 +272,17 @@ function SystemAdmin() {
 
 // ─── hr / administration ───────────────────────────────────────────────────
 
-function HrAdmin() {
-  const onDuty = EMPLOYEES.filter((e) => e.shiftStatus === 'on_duty').length;
-  const pending = MEMBERSHIP_REQUESTS.filter((m) => m.status === 'pending').length;
-  const generalists = EMPLOYEES.filter((e) => e.specialisations.length === 0).length;
+function HrAdmin({ data }: { data: AdminData }) {
+  const onDuty = data.employees.filter((e) => e.shiftStatus === 'on_duty').length;
+  const pending = data.membershipRequests.filter((m) => m.status === 'pending').length;
+  const generalists = data.employees.filter((e) => e.specialisations.length === 0).length;
 
   return (
     <>
       {intro('hr_admin')}
 
       <StatGrid>
-        <Stat label="Staff" value={String(EMPLOYEES.length)} />
+        <Stat label="Staff" value={String(data.employees.length)} />
         <Stat label="On duty" value={String(onDuty)} tone="good" />
         <Stat
           label="Awaiting acceptance"
@@ -303,7 +303,8 @@ function HrAdmin() {
       >
         <Table
           columns={['Name', 'Says they are', 'Signed up via', 'Email', '']}
-          rows={MEMBERSHIP_REQUESTS.filter((m) => m.status === 'pending')
+          rows={data.membershipRequests
+            .filter((m) => m.status === 'pending')
             .slice(0, 6)
             .map((m) => [
               <span key="n" className="font-medium text-text-primary">
@@ -339,12 +340,12 @@ function HrAdmin() {
       >
         <Table
           columns={['Name', 'Branch', 'Duties', 'Handles', 'Shift']}
-          rows={EMPLOYEES.slice(0, 8).map((e) => [
+          rows={data.employees.slice(0, 8).map((e) => [
             <span key="n" className="font-medium text-text-primary">
               {e.displayName}
             </span>,
             <span key="b" className="text-xs text-text-muted">
-              {BRANCHES.find((b) => b.id === e.branchId)?.name ?? 'Unassigned'}
+              {data.branches.find((b) => b.id === e.branchId)?.name ?? 'Unassigned'}
             </span>,
             <span key="d" className="text-xs text-text-muted">
               {e.duties.map((d) => d.replace(/_/g, ' ')).join(', ') || '—'}
@@ -375,8 +376,8 @@ function HrAdmin() {
 
 // ─── operations ────────────────────────────────────────────────────────────
 
-function Operations() {
-  const unmatched = ROUTING_QUEUE.filter(
+function Operations({ data }: { data: AdminData }) {
+  const unmatched = data.routing.filter(
     (r) => r.suggestedBusinessIds.length === 0 && r.requestedBusinessIds.length === 0,
   ).length;
 
@@ -385,7 +386,7 @@ function Operations() {
       {intro('operations')}
 
       <StatGrid>
-        <Stat label="In the queue" value={String(ROUTING_QUEUE.length)} />
+        <Stat label="In the queue" value={String(data.routing.length)} />
         <Stat
           label="Matched nobody"
           value={String(unmatched)}
@@ -402,7 +403,7 @@ function Operations() {
       >
         <Table
           columns={['Report', 'Category', 'Matched', 'Why']}
-          rows={ROUTING_QUEUE.slice(0, 8).map((r) => {
+          rows={data.routing.slice(0, 8).map((r) => {
             const matched = r.suggestedBusinessIds.length + r.requestedBusinessIds.length;
             return [
               <span key="r" className="text-xs text-text-secondary">
@@ -471,9 +472,9 @@ function Operations() {
 
 // ─── branch ────────────────────────────────────────────────────────────────
 
-function BranchManager() {
-  const branch = BRANCHES[0];
-  const staff = EMPLOYEES.filter((e) => e.branchId === branch?.id);
+function BranchManager({ data }: { data: AdminData }) {
+  const branch = data.branches[0];
+  const staff = data.employees.filter((e) => e.branchId === branch?.id);
   const onDuty = staff.filter((e) => e.shiftStatus === 'on_duty');
 
   return (
@@ -541,9 +542,9 @@ function BranchManager() {
 
 // ─── compliance ────────────────────────────────────────────────────────────
 
-function Compliance() {
-  const unscreened = ONBOARDING_APPLICATIONS.filter((a) => a.screeningRunAtIso === null);
-  const flagged = ONBOARDING_APPLICATIONS.filter((a) => a.screeningClear === false);
+function Compliance({ data }: { data: AdminData }) {
+  const unscreened = data.applications.filter((a) => a.screeningRunAtIso === null);
+  const flagged = data.applications.filter((a) => a.screeningClear === false);
 
   return (
     <>
@@ -570,7 +571,7 @@ function Compliance() {
       >
         <Table
           columns={['Organisation', 'Reference', 'Steps approved', 'Screening', '']}
-          rows={ONBOARDING_APPLICATIONS.slice(0, 6).map((a) => [
+          rows={data.applications.slice(0, 6).map((a) => [
             <span key="o" className="font-medium text-text-primary">
               {a.organisationName}
             </span>,
@@ -637,16 +638,14 @@ function Compliance() {
 
 // ─── finance ───────────────────────────────────────────────────────────────
 
-function Finance() {
-  const owed = COMMISSION_LEDGER.filter((c) => c.status === 'earned').reduce(
-    (t, c) => t + c.amountPesewas,
-    0,
-  );
-  const paid = COMMISSION_LEDGER.filter((c) => c.status === 'paid').reduce(
-    (t, c) => t + c.amountPesewas,
-    0,
-  );
-  const mrr = BUSINESSES.reduce((t, b) => {
+function Finance({ data }: { data: AdminData }) {
+  const owed = data.commissions
+    .filter((c) => c.status === 'earned')
+    .reduce((t, c) => t + c.amountPesewas, 0);
+  const paid = data.commissions
+    .filter((c) => c.status === 'paid')
+    .reduce((t, c) => t + c.amountPesewas, 0);
+  const mrr = data.organisations.reduce((t, b) => {
     const plan = SUBSCRIPTION_PLANS[b.tier];
     return (
       t + (plan.billingPeriod === 'annual' ? Math.round(plan.feePesewas / 12) : plan.feePesewas)
@@ -666,7 +665,7 @@ function Finance() {
           hint="Licensed, not yet paid"
         />
         <Stat label="Settled" value={money(paid)} tone="good" />
-        <Stat label="Batches" value={String(PAYOUT_BATCHES.length)} hint="Payout runs" />
+        <Stat label="Batches" value={String(data.payoutBatches.length)} hint="Payout runs" />
       </StatGrid>
 
       <Panel
@@ -675,7 +674,7 @@ function Finance() {
       >
         <Table
           columns={['Institution', 'Tier', 'Status', 'Downloads', 'Monthly']}
-          rows={BUSINESSES.map((b) => {
+          rows={data.organisations.map((b) => {
             const plan = SUBSCRIPTION_PLANS[b.tier];
             const monthly =
               plan.billingPeriod === 'annual' ? Math.round(plan.feePesewas / 12) : plan.feePesewas;
@@ -716,7 +715,7 @@ function Finance() {
       >
         <Table
           columns={['Report', 'Category', 'Licensed by', 'Status', 'Amount']}
-          rows={COMMISSION_LEDGER.slice(0, 7).map((c) => [
+          rows={data.commissions.slice(0, 7).map((c) => [
             <span key="r" className="text-xs text-text-secondary">
               {c.incidentSummary}
             </span>,
@@ -753,7 +752,7 @@ function Finance() {
 
 // ─── auditor ───────────────────────────────────────────────────────────────
 
-function Auditor() {
+function Auditor({ data }: { data: AdminData }) {
   return (
     <>
       {intro('auditor')}
@@ -770,7 +769,7 @@ function Auditor() {
         <Stat label="Entries (30d)" value="1,284" />
         <Stat label="Decisions reversed" value="6" tone="warn" />
         <Stat label="Routing overrides" value="23" />
-        <Stat label="Payout runs" value={String(PAYOUT_BATCHES.length)} />
+        <Stat label="Payout runs" value={String(data.payoutBatches.length)} />
       </StatGrid>
 
       <Panel
@@ -811,8 +810,8 @@ function Auditor() {
       >
         <Table
           columns={['Report', 'Assurance', 'State', 'May say “verified”']}
-          rows={EDITORIAL_CASES.slice(0, 6).map((c) => {
-            const incident = SAMPLE_INCIDENTS.find((i) => i.id === c.incidentId);
+          rows={data.editorialCases.slice(0, 6).map((c) => {
+            const incident = data.incidents.find((i) => i.id === c.incidentId);
             const verified =
               incident?.verification === 'verified_high_confidence' ||
               incident?.verification === 'verified_in_part';
@@ -845,7 +844,7 @@ function Auditor() {
 
 // ─── dispatch ──────────────────────────────────────────────────────────────
 
-const DASHBOARDS: Record<AdminRole, () => React.JSX.Element> = {
+const DASHBOARDS: Record<AdminRole, (props: { data: AdminData }) => React.JSX.Element> = {
   super_admin: SuperAdmin,
   dawuro_admin: DawuroAdmin,
   system_admin: SystemAdmin,
@@ -857,11 +856,20 @@ const DASHBOARDS: Record<AdminRole, () => React.JSX.Element> = {
   auditor: Auditor,
 };
 
-export function AdminDashboard({ role }: { role: AdminRole }) {
+/**
+ * A role's dashboard, over data the page fetched.
+ *
+ * The bundle is passed in rather than imported here. Every one of these nine
+ * dashboards used to read seeded constants directly, so an auditor's ledger, a
+ * finance officer's balances and an operations queue were all invented — and
+ * being module-level imports, there was no point at which a failed fetch could
+ * have been noticed, because nothing was fetched.
+ */
+export function AdminDashboard({ role, data }: { role: AdminRole; data: AdminData }) {
   const Component = DASHBOARDS[role];
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4 p-5">
-      <Component />
+      <Component data={data} />
     </div>
   );
 }

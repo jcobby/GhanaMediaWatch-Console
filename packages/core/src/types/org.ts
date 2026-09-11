@@ -8,7 +8,7 @@ import type { OrgRole } from '../logic/permissions';
  * An organisation on Dawuro is rarely one office. A metropolitan assembly has
  * sub-metros, a utility has district depots, a media house has regional
  * bureaux — and an incident that belongs to one of them does not belong to the
- * others. Modelling a business as a flat list of users would make it impossible
+ * others. Modelling an organisation as a flat list of users would make it impossible
  * to route a Tema report to the people who can actually go to Tema.
  */
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   AlertTriangle,
   Building2,
@@ -13,12 +14,12 @@ import {
   X,
 } from 'lucide-react';
 import {
-  ONBOARDING_APPLICATIONS,
   formatCedis,
   formatRelativeTime,
   isUnlimited,
   planFor,
-  type BusinessApplication,
+  type OrganisationApplication,
+  type OnboardingApplication,
 } from '@dawuro/core';
 import { Badge, Button, Panel } from '@/components/ui';
 import { ApplicationReview } from '@/components/ApplicationReview';
@@ -66,8 +67,58 @@ const FLAG_COPY: Record<string, { title: string; detail: string }> = {
  * asks for a reason, because an applicant who is told nothing simply applies
  * again with the same problem.
  */
-export function ApprovalsWorkspace({ applications }: { applications: BusinessApplication[] }) {
+/**
+ * Two lists, both from the server.
+ *
+ * `applications` are new requests awaiting a yes or no; `inOnboarding` are the
+ * organisations already partway through, reviewed step by step. The second used
+ * to be a seeded constant read directly here, so an operator worked through
+ * onboarding steps for organisations that did not exist while the real ones
+ * were invisible.
+ */
+export function ApprovalsWorkspace({
+  applications,
+  inOnboarding,
+}: {
+  applications: OrganisationApplication[];
+  inOnboarding: OnboardingApplication[];
+}) {
+  const router = useRouter();
   const [decided, setDecided] = useState<Record<string, 'approved' | 'rejected'>>({});
+  const [failure, setFailure] = useState<string | null>(null);
+
+  /**
+   * Send the decision, then move the row.
+   *
+   * This used to be `setDecided` alone: the row left the list, the platform was
+   * told nothing, and a reload brought the application back. An operator could
+   * believe they had approved a newsroom that had never left the browser.
+   *
+   * The console cannot decline an application the backend holds — the API
+   * publishes `approve` and no equivalent reject — so that answer comes back
+   * from the server and is shown rather than swallowed.
+   */
+  const decide = async (id: string, outcome: 'approved' | 'rejected', note?: string) => {
+    setFailure(null);
+    try {
+      const res = await fetch(`/api/platform/applications/${encodeURIComponent(id)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          outcome === 'rejected' ? { decision: outcome, note } : { decision: outcome },
+        ),
+      });
+      const answer = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        setFailure(answer.error ?? 'That decision could not be sent.');
+        return;
+      }
+      setDecided((prev) => ({ ...prev, [id]: outcome }));
+      router.refresh();
+    } catch {
+      setFailure('The console could not reach its own server. Check that it is still running.');
+    }
+  };
   const pending = applications.filter((a) => !(a.id in decided));
 
   if (pending.length === 0) {
@@ -91,6 +142,15 @@ export function ApprovalsWorkspace({ applications }: { applications: BusinessApp
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl space-y-3 px-7 py-6">
+        {/* The server's own answer. Some decisions this screen offers cannot be
+            sent at all — the API publishes no reject — and an operator has to
+            see that rather than watch the row quietly stay put. */}
+        {failure ? (
+          <p className="rounded-md border border-danger/25 bg-danger-wash px-4 py-2.5 text-sm text-danger">
+            {failure}
+          </p>
+        ) : null}
+
         <Panel className="flex items-start gap-3 border-info/20 bg-info-wash/30 p-3.5">
           <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-info" strokeWidth={2} />
           <p className="text-xs leading-relaxed text-text-secondary">
@@ -101,7 +161,7 @@ export function ApprovalsWorkspace({ applications }: { applications: BusinessApp
 
         {/* Organisations already in onboarding. Reviewed step by step rather
             than accepted or declined as one blob. */}
-        {ONBOARDING_APPLICATIONS.map((app) => (
+        {inOnboarding.map((app) => (
           <Panel key={app.reference} className="p-5">
             <ApplicationReview application={app} />
           </Panel>
@@ -111,7 +171,7 @@ export function ApprovalsWorkspace({ applications }: { applications: BusinessApp
           <ApplicationCard
             key={application.id}
             application={application}
-            onDecide={(outcome) => setDecided((prev) => ({ ...prev, [application.id]: outcome }))}
+            onDecide={(outcome, note) => void decide(application.id, outcome, note)}
           />
         ))}
       </div>
@@ -123,8 +183,15 @@ function ApplicationCard({
   application,
   onDecide,
 }: {
-  application: BusinessApplication;
-  onDecide: (outcome: 'approved' | 'rejected') => void;
+  application: OrganisationApplication;
+  /**
+   * The reason travels with a rejection.
+   *
+   * It was typed into a field on this card and never passed anywhere — the
+   * applicant would have been declined with the reviewer's explanation left
+   * behind in a React state variable.
+   */
+  onDecide: (outcome: 'approved' | 'rejected', note?: string) => void;
 }) {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
@@ -254,7 +321,7 @@ function ApplicationCard({
               size="sm"
               variant="danger"
               disabled={reason.trim().length < 4}
-              onClick={() => onDecide('rejected')}
+              onClick={() => onDecide('rejected', reason.trim())}
             >
               Decline application
             </Button>

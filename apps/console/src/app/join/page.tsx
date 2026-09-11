@@ -1,5 +1,7 @@
 import Link from 'next/link';
-import { BRANCHES, BUSINESSES, type Branch } from '@dawuro/core';
+import type { Branch, OrganisationAccount } from '@dawuro/core';
+import { publicApi } from '@/lib/consoleApi';
+import { Outage, load } from '@/components/ui';
 import { GoogleButton } from '@/components/GoogleButton';
 import { JoinForm } from './JoinForm';
 
@@ -8,13 +10,31 @@ import { JoinForm } from './JoinForm';
  *
  * Separate from /register, which is for an organisation signing itself up.
  */
-export default function JoinPage() {
-  const active = BUSINESSES.filter((b) => b.subscriptionStatus !== 'cancelled');
+export default async function JoinPage() {
+  /*
+   * The public directory of organisations already on Dawuro.
+   *
+   * Read from `/organisations`, which is the only list a person who has not
+   * signed in is entitled to see. It used to offer the seeded set, so somebody
+   * joining picked their employer from a list of organisations that had never
+   * registered — and the request went nowhere.
+   *
+   * Branches are not public: which depots an institution runs is its own
+   * organisation, and the API exposes them only to its members. The picker offers
+   * organisations, and the employer assigns the branch when it confirms the
+   * person works there — which is where that decision belonged anyway.
+   */
+  const result = await load(() => publicApi.organisations<OrganisationAccount>());
+  if (!result.ok) {
+    return (
+      <main className="mx-auto min-h-screen w-full max-w-2xl px-6 py-12">
+        <Outage error={result.error} retryHref="/join" />
+      </main>
+    );
+  }
 
-  const branchesByBusiness = BRANCHES.reduce<Record<string, Branch[]>>((acc, branch) => {
-    (acc[branch.businessId] ??= []).push(branch);
-    return acc;
-  }, {});
+  const active = result.data.filter((b) => b.subscriptionStatus !== 'cancelled');
+  const branchesByBusiness: Record<string, Branch[]> = {};
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-2xl px-6 py-12">
@@ -38,7 +58,7 @@ export default function JoinPage() {
         </div>
       </div>
 
-      <JoinForm businesses={active} branchesByBusiness={branchesByBusiness} />
+      <JoinForm organisations={active} branchesByBusiness={branchesByBusiness} />
 
       <p className="mt-8 text-xs text-text-faint">
         Signing your whole organisation up instead?{' '}

@@ -8,7 +8,7 @@ import {
   CATEGORY_GROUP_LABEL,
   CATEGORY_META,
   categoriesInGroup,
-  type BusinessSector,
+  type OrganisationSector,
   type IncidentCategory,
   type SubscriptionTier,
 } from '@dawuro/core';
@@ -16,7 +16,7 @@ import { Button, Field, Panel } from '@/components/ui';
 import { PlanPicker } from '@/components/PlanPicker';
 import { cn } from '@/lib/cn';
 
-const SECTORS: { value: BusinessSector; label: string }[] = [
+const SECTORS: { value: OrganisationSector; label: string }[] = [
   { value: 'government', label: 'Government agency' },
   { value: 'media', label: 'Media house' },
   { value: 'utility', label: 'Utility provider' },
@@ -53,10 +53,18 @@ export function RegisterForm() {
   const [step, setStep] = useState<Step>('organisation');
 
   const [name, setName] = useState('');
-  const [sector, setSector] = useState<BusinessSector>('government');
+  const [sector, setSector] = useState<OrganisationSector>('government');
   const [contactName, setContactName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  /*
+   * A password, collected at registration.
+   *
+   * Without one there was no way back in: registration signed the applicant
+   * straight into a session, and once it expired no credential existed that
+   * could recreate it. It is also what the backend's account creation requires.
+   */
+  const [password, setPassword] = useState('');
 
   const [interests, setInterests] = useState<IncidentCategory[]>([]);
   const [expected, setExpected] = useState(20);
@@ -93,6 +101,8 @@ export function RegisterForm() {
   if (!contactName.trim()) orgMissing.push('your name');
   if (!/.+@.+\..+/.test(email)) orgMissing.push('a valid work email');
   if (!phone.trim()) orgMissing.push('a phone number');
+  // The server's own floor. Said here so it is not discovered on submit.
+  if (password.length < 8) orgMissing.push('a password of at least 8 characters');
 
   const submit = async () => {
     setSubmitting(true);
@@ -102,6 +112,7 @@ export function RegisterForm() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        password,
         organisationName: name.trim(),
         sector,
         contactName: contactName.trim(),
@@ -178,7 +189,7 @@ export function RegisterForm() {
             <select
               id="sector"
               value={sector}
-              onChange={(e) => setSector(e.target.value as BusinessSector)}
+              onChange={(e) => setSector(e.target.value as OrganisationSector)}
               className="h-10 w-full rounded-sm border border-hairline/15 bg-canvas-soft px-3 text-base"
             >
               {SECTORS.map((s) => (
@@ -206,14 +217,29 @@ export function RegisterForm() {
             />
           </div>
 
-          <Field
-            label="Phone"
-            type="tel"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="+233 20 000 0000"
-            required
-          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Phone"
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+233 20 000 0000"
+              required
+            />
+            <Field
+              label="Password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="At least 8 characters"
+              autoComplete="new-password"
+              required
+            />
+          </div>
+          <p className="-mt-1 text-2xs text-text-faint">
+            You will sign in with this email and password. Keep them — this is the only way back
+            into the account.
+          </p>
 
           <StepFooter
             missing={orgMissing}

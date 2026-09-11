@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import {
   MAX_AGE_SECONDS,
   SESSION_COOKIE,
+  sessionIssuedAt,
   signSessionToken,
   verifySessionToken,
   type SessionUser,
@@ -43,6 +44,21 @@ export async function readSession(): Promise<SessionUser | null> {
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;
   return verifySessionToken(token);
+}
+
+/**
+ * How long ago this browser signed in, in seconds, or null if it has not.
+ *
+ * Used to tell "your sign-in predates your organisation" apart from "you have
+ * just signed in and it made no difference" — two situations that produce an
+ * identical 403 and call for opposite things to be said. See `OrganisationOutage`.
+ */
+export async function sessionAgeSeconds(): Promise<number | null> {
+  const store = await cookies();
+  const token = store.get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+  const issuedAt = await sessionIssuedAt(token);
+  return issuedAt === null ? null : Math.max(0, Math.floor(Date.now() / 1000) - issuedAt);
 }
 
 export async function destroySession(): Promise<void> {

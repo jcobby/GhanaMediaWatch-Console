@@ -24,6 +24,21 @@ export default function NoConsole() {
         <p className="mt-4 text-sm text-text-muted">
           Install the app on your phone to send reports and track what you have earned.
         </p>
+
+        {/*
+          The other person who lands here.
+
+          Somebody who registered an organisation gets a reporter account,
+          because that is the only kind the service can create — and on a later
+          sign-in nothing records that they ever applied, so they arrive at a
+          page telling them to use their phone. That contradicts what they did,
+          and without this line they would reasonably conclude the registration
+          was lost.
+        */}
+        <p className="mt-4 border-t border-hairline/[0.08] pt-4 text-xs leading-relaxed text-text-faint">
+          Registered an organisation? Its account is not set up yet — that is done by the Dawuro
+          team, and this page is what you will see until it is. Nothing you submitted has been lost.
+        </p>
         <Link
           href="/login"
           className="mt-6 inline-block text-sm font-medium text-accent hover:underline"

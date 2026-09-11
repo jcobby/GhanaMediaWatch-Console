@@ -88,6 +88,7 @@ export function Table({
   rows,
   align = [],
   rowHref,
+  empty,
 }: {
   columns: string[];
   rows: ReactNode[][];
@@ -95,11 +96,24 @@ export function Table({
   align?: number[];
   /** Where row `i` goes when clicked. Return undefined for a row that is not navigable. */
   rowHref?: (index: number) => string | undefined;
+  /**
+   * What would put something in this table.
+   *
+   * "Nothing here yet" is true of an empty audit ledger, an empty payout queue
+   * and an empty staff list, and useless on all three: it does not say whether
+   * the operator is waiting on somebody, on a process, or on themselves. Where
+   * a page can answer that, it should.
+   */
+  empty?: string;
 }) {
   const right = new Set(align);
 
   if (rows.length === 0) {
-    return <p className="py-6 text-center text-xs text-text-faint">Nothing here yet.</p>;
+    return (
+      <p className="py-6 text-center text-xs leading-relaxed text-text-faint">
+        {empty ?? 'Nothing here yet.'}
+      </p>
+    );
   }
 
   return (

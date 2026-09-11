@@ -1,14 +1,14 @@
 import { redirect } from 'next/navigation';
 import {
-  BUSINESSES,
-  BUSINESS_APPLICATIONS,
-  ONBOARDING_APPLICATIONS,
   ONBOARDING_STEPS,
   SUBSCRIPTION_PLANS,
   approvalProblem,
   formatCedis,
   roleCan,
   stepState,
+  type OrganisationAccount,
+  type OrganisationApplication,
+  type OnboardingApplication,
 } from '@dawuro/core';
 import {
   Note,
@@ -22,6 +22,8 @@ import {
 } from '@/components/admin/Widgets';
 import { RowAction, RowActions } from '@/components/admin/RowAction';
 import { requireSession } from '@/lib/session';
+import { NotWired, Outage, load } from '@/components/ui';
+import { platform } from '@/lib/consoleApi';
 
 const PROBLEM_LABEL: Record<string, string> = {
   not_submitted: 'Applicant still working',
@@ -35,7 +37,46 @@ export default async function Page() {
   const session = await requireSession();
   if (!session.role || !roleCan(session.role, 'approve_institutions')) redirect('/');
 
-  const live = BUSINESSES.filter(
+  /*
+   * Who is on the platform, and who is still asking to be.
+   *
+   * Both come from the backend. An approval decision made against a seeded
+   * application would approve nothing, while telling the operator it had.
+   */
+  const result = await load(async () => {
+    const [organisations, applications] = await Promise.all([
+      platform.organisations<OrganisationAccount>(),
+      platform.applications<OnboardingApplication>(),
+    ]);
+    return { organisations, applications };
+  });
+
+  if (!result.ok) {
+    return (
+      <PageShell>
+        <PageIntro
+          title="Institutions"
+          blurb="Every organisation on the platform, and where its application stands."
+        />
+        <NotWired what="Approving an institution" />
+        <Outage error={result.error} retryHref="/admin/institutions" />
+      </PageShell>
+    );
+  }
+
+  const ORGANISATIONS = result.data.organisations;
+  const ONBOARDING_APPLICATIONS = result.data.applications;
+  /*
+   * The same list, read as enquiries.
+   *
+   * The API has one applications endpoint; the two fixtures this page used —
+   * `ORGANISATION_APPLICATIONS` and `ONBOARDING_APPLICATIONS` — were two views of
+   * the same thing. Everything that has not been approved is still an enquiry.
+   */
+  const ORGANISATION_APPLICATIONS = result.data.applications.filter(
+    (a) => !a.approvedAtIso,
+  ) as unknown as OrganisationApplication[];
+  const live = ORGANISATIONS.filter(
     (b) => b.subscriptionStatus === 'active' || b.subscriptionStatus === 'trialing',
   );
   const pending = ONBOARDING_APPLICATIONS.filter((a) => !a.approvedAtIso);
@@ -49,7 +90,7 @@ export default async function Page() {
       />
 
       <StatGrid>
-        <Stat label="On the platform" value={String(BUSINESSES.length)} />
+        <Stat label="On the platform" value={String(ORGANISATIONS.length)} />
         <Stat label="Receiving reports" value={String(live.length)} tone="good" />
         <Stat
           label="In onboarding"
@@ -140,7 +181,7 @@ export default async function Page() {
       <Panel title="Live accounts" subtitle="What each is on, and how much of it they are using.">
         <Table
           columns={['Organisation', 'Sector', 'Tier', 'Status', 'Seats', 'Downloads', 'Fee']}
-          rows={BUSINESSES.map((b) => {
+          rows={ORGANISATIONS.map((b) => {
             const plan = SUBSCRIPTION_PLANS[b.tier];
             return [
               <span key="n" className="font-medium text-text-primary">
@@ -179,11 +220,11 @@ export default async function Page() {
         />
       </Panel>
 
-      {BUSINESS_APPLICATIONS.length > 0 ? (
+      {ORGANISATION_APPLICATIONS.length > 0 ? (
         <Panel title="New enquiries" subtitle="Registered, not yet through onboarding.">
           <Table
             columns={['Organisation', 'Sector', 'Contact', 'Wants', 'Status']}
-            rows={BUSINESS_APPLICATIONS.map((a) => [
+            rows={ORGANISATION_APPLICATIONS.map((a) => [
               <span key="o" className="font-medium text-text-primary">
                 {a.organisationName}
               </span>,
