@@ -48,15 +48,40 @@ function matcher(): RegExp {
   return new RegExp(`^${line[1]!.replace(/\\\\/g, '\\')}$`);
 }
 
+test('the invite route is exempt from the session rule, and only it', () => {
+  /*
+   * Pins the exemption so it cannot quietly widen. An endpoint that skips the
+   * session check is the one kind of hole this suite exists to prevent, and the
+   * list of them should be short enough to read in one line.
+   */
+  const apiRoot = path.join(SRC, 'app', 'api');
+  const unguarded: string[] = [];
+
+  (function walk(dir: string) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (entry.name !== 'route.ts') continue;
+      const rel = path.relative(apiRoot, full).replace(/\\/g, '/');
+      if (rel.startsWith('auth/')) continue;
+      const src = fs.readFileSync(full, 'utf8');
+      if (!/readSession\(\)|requireSession\(\)/.test(src)) unguarded.push(rel);
+    }
+  })(apiRoot);
+
+  expect(unguarded).toEqual(['invites/[token]/route.ts']);
+});
+
 test('no API route is matched by middleware', () => {
   const pattern = matcher();
   for (const route of [
     '/api/onboarding',
-    '/api/onboarding/documents',
     '/api/editorial/inc_123',
     '/api/routing/inc_123',
     '/api/platform/applications/held_1',
-    '/api/platform/applications/held_1/documents/officer_id',
     '/api/auth/login',
   ]) {
     expect([route, pattern.test(route)]).toEqual([route, false]);
@@ -89,6 +114,14 @@ test('every API route guards itself, because middleware no longer does', () => {
    *
    * `/api/auth/*` is exempt: sign-in, sign-out and registration are how a
    * session comes to exist, and `assume-role` is gated by its own env flag.
+   *
+   * `/api/invites/{token}` is exempt for the same reason, and only that reason.
+   * Redeeming an invitation is the fourth way a session comes into being: the
+   * caller has no account yet — that is what being invited means — so there is
+   * nothing to read a session from. The unguessable token is the credential, and
+   * the service decides whether it is still good, whether it has been revoked,
+   * and how many times it may be used. A session check here would reject every
+   * legitimate caller.
    */
   const apiRoot = path.join(SRC, 'app', 'api');
   const unguarded: string[] = [];
@@ -104,6 +137,8 @@ test('every API route guards itself, because middleware no longer does', () => {
 
       const rel = path.relative(apiRoot, full).replace(/\\/g, '/');
       if (rel.startsWith('auth/')) continue;
+      // The token is the credential; see the note above.
+      if (rel === 'invites/[token]/route.ts') continue;
 
       const src = fs.readFileSync(full, 'utf8');
       if (!/readSession\(\)|requireSession\(\)/.test(src)) unguarded.push(rel);

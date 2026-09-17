@@ -44,7 +44,10 @@ function allHrefs(): Set<string> {
       if (e.isDirectory()) walk(f);
       else if (/\.tsx?$/.test(e.name) && !f.includes('__tests__')) {
         const src = fs.readFileSync(f, 'utf8');
-        for (const m of src.matchAll(/(?:href|push\()\s*=?\s*["'`](\/[a-z0-9/[\]-]*)["'`]/g)) {
+        // A query string still reaches the page: `/checkout?invoice=…` opens `/checkout`.
+        for (const m of src.matchAll(
+          /(?:href|push\()\s*=?\s*\{?\s*["'`](\/[a-z0-9/[\]-]*)(?:\?[^"'`]*)?["'`]/g,
+        )) {
           found.add(m[1]!);
         }
       }

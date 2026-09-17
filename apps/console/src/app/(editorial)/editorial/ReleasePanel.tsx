@@ -64,8 +64,17 @@ export function ReleasePanel({ destination }: { destination?: SubmissionDestinat
         <Globe className="h-3.5 w-3.5 text-info" strokeWidth={2} />
         Releasing to the public feed
       </p>
+      {/*
+        **"Corroborating" was the wrong word here, and a dangerous one.**
+        `corroboration_in_progress` is where a report goes to *start* being
+        checked — it is the state the checks above are done in, not a decision.
+        Telling an editor that entering it publishes the footage either stops
+        them beginning the work, or has them believe something is public when it
+        is not. The state that publishes is the verification decision, which is
+        what the note at the top of this file established end to end.
+      */}
       <p className="mt-1.5 text-xs leading-relaxed text-text-muted">
-        Recording this as <span className="font-medium text-text-secondary">corroborating</span>{' '}
+        Recording this as <span className="font-medium text-text-secondary">Verified</span>{' '}
         publishes it.{' '}
         {goesPublic
           ? 'The reporter marked it for the public feed, so it appears in the app for everyone as soon as it reaches that decision — there is no separate release step.'

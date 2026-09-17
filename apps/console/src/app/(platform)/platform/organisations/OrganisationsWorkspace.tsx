@@ -207,7 +207,7 @@ export function OrganisationsWorkspace({
                           {formatCedis(periodRevenue)}
                         </p>
                         <p className="text-2xs text-text-faint">
-                          per {plan.billingPeriod === 'annual' ? 'year' : 'month'}
+                          {plan ? `per ${plan.billingPeriod === 'annual' ? 'year' : 'month'}` : '—'}
                         </p>
                       </div>
                     </div>

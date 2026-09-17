@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import type { Branch, OrganisationAccount } from '@dawuro/core';
+import type { OrganisationAccount } from '@dawuro/core';
 import { publicApi } from '@/lib/consoleApi';
 import { Outage, load } from '@/components/ui';
 import { GoogleButton } from '@/components/GoogleButton';
@@ -34,7 +34,6 @@ export default async function JoinPage() {
   }
 
   const active = result.data.filter((b) => b.subscriptionStatus !== 'cancelled');
-  const branchesByBusiness: Record<string, Branch[]> = {};
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-2xl px-6 py-12">
@@ -58,7 +57,7 @@ export default async function JoinPage() {
         </div>
       </div>
 
-      <JoinForm organisations={active} branchesByBusiness={branchesByBusiness} />
+      <JoinForm organisations={active} />
 
       <p className="mt-8 text-xs text-text-faint">
         Signing your whole organisation up instead?{' '}

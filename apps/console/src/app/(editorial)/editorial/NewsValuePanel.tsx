@@ -78,7 +78,14 @@ export function NewsValuePanel({
   saveState: SaveState;
   onChange: (next: NewsValueState) => void;
 }) {
-  const scored = scoreNews(state.ratings, state.modifiers, state.unassessed);
+  /*
+   * The gates go in, so the tier on screen is the tier the model means.
+   *
+   * Without them the badge came from the score alone, and a report with three
+   * gates unanswered wore "Top five" directly under the words "Pass all four,
+   * or it is not a top story at all".
+   */
+  const scored = scoreNews(state.ratings, state.modifiers, state.unassessed, state.gates);
   const result = applyElectionFairness(scored, state.election);
   const eligible = passesAllGates(state.gates);
   const failed = failedGates(state.gates);

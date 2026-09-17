@@ -1,15 +1,18 @@
-import type {
-  Branch,
-  OrganisationAccount,
-  Employee,
-  MembershipRequest,
-  OrgAffiliation,
-  Invite,
+import { redirect } from 'next/navigation';
+import {
+  roleCan,
+  type Branch,
+  type OrganisationAccount,
+  type Employee,
+  type MembershipRequest,
+  type OrgAffiliation,
+  type Invite,
 } from '@dawuro/core';
 import { PageHeader } from '@/components/shell';
 import { OrganisationOutage } from '@/components/OrganisationOutage';
-import { NotWired, load } from '@/components/ui';
+import { load } from '@/components/ui';
 import { org, platform } from '@/lib/consoleApi';
+import { requireSession } from '@/lib/session';
 import { TeamWorkspace } from './TeamWorkspace';
 
 /**
@@ -20,6 +23,19 @@ import { TeamWorkspace } from './TeamWorkspace';
  * chance of listing another organisation's staff if an id ever mismatched.
  */
 export default async function Page() {
+  /*
+   * `manage_staff`, because this page is not a roster — it is the door.
+   *
+   * It lists employees and branches, but it also accepts membership requests and
+   * issues invites, and an invite is how somebody gets inside the organisation at
+   * all. Anyone who can work this screen can decide who else may read citizens'
+   * footage, which is a strictly larger power than reading it.
+   *
+   * Only enforced when the account has a role: see the note on the inbox page.
+   */
+  const session = await requireSession();
+  if (session.role && !roleCan(session.role, 'manage_staff')) redirect('/');
+
   const result = await load(async () => {
     const organisation = await org.current<OrganisationAccount>();
     const [employees, branches, requests, invites, affiliations, organisations] = await Promise.all(
@@ -50,7 +66,6 @@ export default async function Page() {
               : `${result.data.employees.length} staff across ${result.data.branches.length} branches`
         }
       />
-      <NotWired what="Accepting or declining someone into your team" />
       {result.ok ? (
         <TeamWorkspace
           employees={result.data.employees}

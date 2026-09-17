@@ -16,30 +16,58 @@ import path from 'path';
  * stale warning teaches people to ignore the real ones.
  */
 
-const APP = path.resolve(__dirname, '..', 'app');
+const SRC = path.resolve(__dirname, '..');
+const APP = path.join(SRC, 'app');
 
-/** A page and the client components beside it — the actions live in those. */
-function sourcesFor(route: string): string {
+/**
+ * A page, the client components beside it, and any shared component it renders
+ * its actions through — the actions live in those.
+ */
+function sourcesFor(route: string, extra: string[] = []): string {
   const dir = path.join(APP, route);
-  return fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith('.tsx'))
-    .map((f) => fs.readFileSync(path.join(dir, f), 'utf8'))
-    .join('\n');
+  return [
+    ...fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith('.tsx'))
+      .map((f) => fs.readFileSync(path.join(dir, f), 'utf8')),
+    ...extra.map((rel) => fs.readFileSync(path.join(SRC, rel), 'utf8')),
+  ].join('\n');
 }
 
 /** Screens whose decisions have real-world consequences. */
-const CONSEQUENTIAL: { route: string; decision: string }[] = [
-  { route: '(platform)/platform/payouts', decision: 'releasing money to reporters' },
+const CONSEQUENTIAL: { route: string; decision: string; extra?: string[] }[] = [
+  {
+    route: '(platform)/platform/payouts',
+    decision: 'releasing money to reporters',
+    extra: ['components/payouts/PayoutsWorkspace.tsx'],
+  },
   { route: '(platform)/platform/approvals', decision: 'granting access to citizens’ footage' },
   { route: '(platform)/platform/routing', decision: 'routing a report' },
   { route: '(organisation)/inbox', decision: 'licensing a report, which charges and pays' },
   { route: '(organisation)/published', decision: 'publishing somebody’s footage' },
   { route: '(organisation)/team', decision: 'admitting somebody to an organisation' },
   { route: '(organisation)/checkout', decision: 'paying an invoice' },
-  { route: '(admin)/admin/institutions', decision: 'approving an institution' },
+  /*
+   * `(admin)/admin/institutions` used to be here, and it is deliberately gone.
+   *
+   * It offered "Run screening" and "Approve" as simulated controls — a tick
+   * after a timer, nothing sent — on the page that *reads* like where approvals
+   * happen. Wiring them would have meant two ways to grant access to citizens'
+   * footage, and the weaker one would have been the more prominent. The controls
+   * are removed instead: the page reports where each application stands and
+   * links to `/platform/approvals`, which reviews step by step, gates approval
+   * on screening, and sends every decision to the service.
+   *
+   * So it is no longer a screen that takes a consequential decision, and a rule
+   * demanding it save or warn would be asking it to warn about something it does
+   * not offer. `(platform)/platform/approvals` above is the screen under review.
+   */
   { route: '(admin)/admin/takedowns', decision: 'deciding a request under Act 843' },
-  { route: '(admin)/admin/payouts', decision: 'releasing money' },
+  {
+    route: '(admin)/admin/payouts',
+    decision: 'releasing money',
+    extra: ['components/payouts/PayoutsWorkspace.tsx'],
+  },
   { route: '(admin)/admin/administrators', decision: 'granting administrator access' },
   { route: '(editorial)/editorial', decision: 'ruling on what may be called verified' },
 ];
@@ -48,8 +76,9 @@ const writesToServer = (src: string) => /fetch\('\/api\/|fetch\(`\/api\//.test(s
 
 test('the routes under review all exist', () => {
   // A renamed folder would silently empty this whole file.
-  for (const { route } of CONSEQUENTIAL) {
+  for (const { route, extra = [] } of CONSEQUENTIAL) {
     expect([route, fs.existsSync(path.join(APP, route))]).toEqual([route, true]);
+    for (const rel of extra) expect([rel, fs.existsSync(path.join(SRC, rel))]).toEqual([rel, true]);
   }
 });
 
@@ -61,8 +90,8 @@ test('every consequential screen either saves or admits it cannot', () => {
    */
   const silent: string[] = [];
 
-  for (const { route, decision } of CONSEQUENTIAL) {
-    const src = sourcesFor(route);
+  for (const { route, decision, extra } of CONSEQUENTIAL) {
+    const src = sourcesFor(route, extra);
     if (writesToServer(src)) continue;
     if (src.includes('<NotWired')) continue;
     silent.push(`${route} — ${decision}`);
@@ -79,8 +108,8 @@ test('a screen that saves does not still carry the warning', () => {
    */
   const stale: string[] = [];
 
-  for (const { route } of CONSEQUENTIAL) {
-    const src = sourcesFor(route);
+  for (const { route, extra } of CONSEQUENTIAL) {
+    const src = sourcesFor(route, extra);
     if (writesToServer(src) && src.includes('<NotWired')) stale.push(route);
   }
 
@@ -97,10 +126,24 @@ test('the routing desk is the one that already saves', () => {
   expect(sourcesFor('(platform)/platform/routing')).not.toContain('<NotWired');
 });
 
-test('at least one screen is still unwired, so the rule is live', () => {
-  // The complement: if everything were wired, the first rule would be vacuous.
-  const unwired = CONSEQUENTIAL.filter(({ route }) => !writesToServer(sourcesFor(route)));
-  expect(unwired.length).toBeGreaterThan(0);
+test('every consequential screen now saves, and none of them only warns', () => {
+  /*
+   * This used to assert the opposite — that at least one screen was still
+   * unwired — as a guard against the main rule going vacuous. That guard has
+   * served its purpose: every screen on the list writes to the server now, so
+   * the complement is empty and the old assertion could only fail.
+   *
+   * Replaced rather than deleted, because the vacuity risk was real and is now
+   * covered from the other side. Naming the screens that are silent makes a
+   * regression legible — "expected [] but got ['(admin)/admin/takedowns']" says
+   * what broke — and the main rule above still bites the moment a new screen
+   * joins the list without either saving or admitting it cannot.
+   */
+  const silent = CONSEQUENTIAL.filter(
+    ({ route, extra }) => !writesToServer(sourcesFor(route, extra)),
+  ).map(({ route }) => route);
+
+  expect(silent).toEqual([]);
 });
 
 test('the warning names the decision rather than gesturing at it', () => {
@@ -108,8 +151,8 @@ test('the warning names the decision rather than gesturing at it', () => {
    * "Some things here don't work" is not something anybody can act on. Each
    * notice has to say which decision is not being saved.
    */
-  for (const { route } of CONSEQUENTIAL) {
-    const src = sourcesFor(route);
+  for (const { route, extra } of CONSEQUENTIAL) {
+    const src = sourcesFor(route, extra);
     if (!src.includes('<NotWired')) continue;
     const what = /<NotWired what="([^"]+)"/.exec(src)?.[1] ?? '';
     expect([route, what.length > 12]).toEqual([route, true]);

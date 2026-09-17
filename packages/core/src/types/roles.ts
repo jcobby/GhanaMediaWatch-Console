@@ -332,10 +332,31 @@ export const ROLE_META: Record<PlatformRole, RoleMeta> = {
     blurb: 'Owns a subscribing organisation’s account.',
     description:
       'The officer who signed for the account. Manages members, branches, the subscription and what categories reach their inbox.',
+    /*
+     * `manage_staff` and `manage_branches` were missing, and the description
+     * above had claimed both for as long as it has existed.
+     *
+     * It went unnoticed while nothing enforced capabilities inside the
+     * organisation shell: `/team` was in the ungated base list, so the officer
+     * who signed for the account reached it regardless of what this array said.
+     * The moment `/team` was gated on `manage_staff` — because that screen
+     * issues invites, and an invite decides who may read citizens' footage — the
+     * omission would have locked out the one person who must never be locked
+     * out of it.
+     *
+     * `manage_subscriptions` is deliberately still absent despite the sentence
+     * above mentioning the subscription: it is the capability that lets a role
+     * change what an organisation is *billed*, it is held by Finance Officer,
+     * and `/account` only displays the plan rather than changing it. Granting it
+     * here would widen this role for a page that needs nothing widened.
+     */
     capabilities: [
       'view_inbox',
       'manage_surveys',
+      'manage_staff',
+      'manage_branches',
       'view_invoices',
+      'view_earnings',
       'manage_affiliations',
       'assign_incidents',
     ],

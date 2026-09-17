@@ -1,146 +1,118 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Plus, ShieldCheck, Trash2, X } from 'lucide-react';
-import {
-  ADMIN_ROLES,
-  MODULE_META,
-  PLATFORM_ROLES,
-  ROLE_META,
-  isReadOnly,
-  roleCan,
-  type PlatformRole,
-} from '@dawuro/core';
+import { PLATFORM_ROLES, ROLE_META, roleCan, type PlatformRole } from '@dawuro/core';
 import { Button, Field } from '@/components/ui';
 import { Note, Panel, Pill, Table } from '@/components/admin/Widgets';
-import { cn } from '@/lib/cn';
+import {
+  ADMIN_ROLE_COPY,
+  lockedReason,
+  type LiveAdmin,
+  type LiveAdminRole,
+} from '@/lib/admins';
 
 /**
  * Creating and managing the people who run the platform.
  *
- * **Simulated** — changes live in component state and are gone on reload,
- * because there is no backend to persist them. The rules being demonstrated
- * are real though, and they are the point of the screen:
+ * Every change is sent to `/platform/admins` and the table then shows the
+ * administrator the service returned. This screen used to hold nine invented
+ * people — names, emails and all — in React state, and every change vanished on
+ * reload.
  *
- *   - Only the platform owner reaches this page at all.
- *   - An owner cannot be modified or removed by anyone else.
- *   - The last owner can never be removed, by anybody, including themselves.
- *
- * That last one is the rule people are surprised by until the day it saves
- * them: an organisation with no owner has nobody who can restore access.
+ * Two rules are shown at the control rather than discovered by pressing it:
+ * nobody changes their own access, and the last platform owner cannot be
+ * removed, suspended or demoted. The service enforces both.
  */
-
-interface Person {
-  id: string;
-  name: string;
-  email: string;
-  role: PlatformRole;
-  addedBy: string;
+interface AdminAnswer {
+  admin?: LiveAdmin | null;
+  removed?: boolean;
+  error?: string;
 }
 
-const SEED: Person[] = [
-  {
-    id: 'p1',
-    name: 'Ama Serwaa',
-    email: 'super.admin@dawuro.gh',
-    role: 'super_admin',
-    addedBy: '—',
-  },
-  {
-    id: 'p2',
-    name: 'Kofi Mensah',
-    email: 'dawuro.admin@dawuro.gh',
-    role: 'dawuro_admin',
-    addedBy: 'Ama Serwaa',
-  },
-  {
-    id: 'p3',
-    name: 'Yaw Boateng',
-    email: 'system.admin@dawuro.gh',
-    role: 'system_admin',
-    addedBy: 'Ama Serwaa',
-  },
-  {
-    id: 'p4',
-    name: 'Akosua Danso',
-    email: 'hr.admin@dawuro.gh',
-    role: 'hr_admin',
-    addedBy: 'Ama Serwaa',
-  },
-  {
-    id: 'p5',
-    name: 'Kwabena Owusu',
-    email: 'operations@dawuro.gh',
-    role: 'operations',
-    addedBy: 'Ama Serwaa',
-  },
-  {
-    id: 'p6',
-    name: 'Efua Asante',
-    email: 'branch.manager@dawuro.gh',
-    role: 'branch_manager',
-    addedBy: 'Kwabena Owusu',
-  },
-  {
-    id: 'p7',
-    name: 'Nana Adjei',
-    email: 'compliance.officer@dawuro.gh',
-    role: 'compliance_officer',
-    addedBy: 'Ama Serwaa',
-  },
-  {
-    id: 'p8',
-    name: 'Abena Frimpong',
-    email: 'finance.officer@dawuro.gh',
-    role: 'finance_officer',
-    addedBy: 'Ama Serwaa',
-  },
-  {
-    id: 'p9',
-    name: 'Kwame Antwi',
-    email: 'auditor@dawuro.gh',
-    role: 'auditor',
-    addedBy: 'Ama Serwaa',
-  },
-];
-
-export function AdminManager({ actorName }: { actorName: string }) {
-  const [people, setPeople] = useState<Person[]>(SEED);
+export function AdminManager({
+  admins: initial,
+  roles,
+  selfEmail,
+}: {
+  admins: LiveAdmin[];
+  roles: LiveAdminRole[];
+  selfEmail: string;
+}) {
+  const router = useRouter();
+  const [admins, setAdmins] = useState(initial);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<PlatformRole>('operations');
-
-  const owners = people.filter((p) => p.role === 'super_admin');
+  const [role, setRole] = useState<LiveAdminRole>(roles.includes('editor') ? 'editor' : roles[0]!);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
 
   const missing: string[] = [];
   if (!name.trim()) missing.push('a name');
   if (!/.+@.+\..+/.test(email)) missing.push('a valid email');
 
-  const add = () => {
-    setPeople((prev) => [
-      ...prev,
-      { id: `p${Date.now()}`, name: name.trim(), email: email.trim(), role, addedBy: actorName },
-    ]);
-    setName('');
-    setEmail('');
-    setRole('operations');
-    setAdding(false);
+  /** One change. Nothing on screen moves until the service has accepted it. */
+  const call = async (key: string, body: Record<string, unknown>) => {
+    setBusy(key);
+    setFailure(null);
+    try {
+      const res = await fetch('/api/platform/admins', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const raw = await res.text();
+      let answer: AdminAnswer | null = null;
+      try {
+        answer = raw ? (JSON.parse(raw) as AdminAnswer) : null;
+      } catch {
+        answer = null;
+      }
+      if (!res.ok || !answer) {
+        setFailure(answer?.error ?? `That could not be saved — the service answered ${res.status}.`);
+        return null;
+      }
+      router.refresh();
+      return answer;
+    } catch {
+      setFailure('The console could not reach its own server. Nothing was changed.');
+      return null;
+    } finally {
+      setBusy(null);
+    }
   };
 
-  /** Why this person cannot be removed, or null when they can. */
-  const blockedFrom = (p: Person): string | null => {
-    if (p.role === 'super_admin' && owners.length <= 1) {
-      return 'The last owner cannot be removed — nobody would be able to restore access.';
-    }
-    return null;
+  const replace = (admin: LiveAdmin | null | undefined) => {
+    if (!admin) return;
+    setAdmins((prev) =>
+      prev.some((a) => a.id === admin.id)
+        ? prev.map((a) => (a.id === admin.id ? admin : a))
+        : [...prev, admin],
+    );
+  };
+
+  const add = async () => {
+    const answer = await call('create', {
+      action: 'create',
+      email: email.trim(),
+      displayName: name.trim(),
+      role,
+    });
+    if (!answer) return;
+    replace(answer.admin);
+    setName('');
+    setEmail('');
+    setAdding(false);
   };
 
   return (
     <>
       <Panel
         title="Administrators"
-        subtitle="Only this role can add or remove one of these."
+        subtitle="Only a platform owner can add, change or remove one."
         action={
           <Button size="sm" onClick={() => setAdding((v) => !v)}>
             {adding ? (
@@ -155,6 +127,15 @@ export function AdminManager({ actorName }: { actorName: string }) {
           </Button>
         }
       >
+        {failure ? (
+          <p
+            role="alert"
+            className="mb-4 rounded-sm border border-danger/25 bg-danger-wash px-3 py-2 text-xs text-danger"
+          >
+            {failure}
+          </p>
+        ) : null}
+
         {adding ? (
           <div className="mb-5 space-y-4 rounded-md border border-accent/25 bg-accent-wash/25 p-4">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -169,46 +150,35 @@ export function AdminManager({ actorName }: { actorName: string }) {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="role" className="text-xs font-medium text-text-secondary">
+              <label htmlFor="new-admin-role" className="text-xs font-medium text-text-secondary">
                 Role
               </label>
               <select
-                id="role"
+                id="new-admin-role"
                 value={role}
-                onChange={(e) => setRole(e.target.value as PlatformRole)}
+                onChange={(e) => setRole(e.target.value as LiveAdminRole)}
                 className="h-10 w-full rounded-sm border border-hairline/15 bg-canvas-soft px-3 text-base"
               >
-                <optgroup label={MODULE_META.admin.label}>
-                  {ADMIN_ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {ROLE_META[r].label}
-                    </option>
-                  ))}
-                </optgroup>
+                {roles.map((r) => (
+                  <option key={r} value={r}>
+                    {ADMIN_ROLE_COPY[r].label}
+                  </option>
+                ))}
               </select>
               <p className="text-2xs leading-relaxed text-text-muted">
-                {ROLE_META[role].description}
+                {ADMIN_ROLE_COPY[role].description}
               </p>
             </div>
 
-            <div className="rounded-sm bg-canvas-soft/70 p-3">
-              <p className="text-2xs font-semibold uppercase tracking-wider text-text-faint">
-                This grants
-              </p>
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                {ROLE_META[role].capabilities.map((c) => (
-                  <Pill key={c} tone="info">
-                    {c.replace(/_/g, ' ')}
-                  </Pill>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3">
+            <div className="flex flex-wrap items-center justify-end gap-3">
               {missing.length > 0 ? (
                 <p className="text-2xs text-text-muted">Still needed: {missing.join(', ')}.</p>
               ) : null}
-              <Button disabled={missing.length > 0} onClick={add}>
+              <Button
+                disabled={missing.length > 0}
+                loading={busy === 'create'}
+                onClick={() => void add()}
+              >
                 Create administrator
               </Button>
             </div>
@@ -216,62 +186,120 @@ export function AdminManager({ actorName }: { actorName: string }) {
         ) : null}
 
         <Table
-          columns={['Name', 'Role', 'Email', 'Added by', 'Holds', '']}
-          rows={people.map((p) => {
-            const meta = ROLE_META[p.role];
-            const blocked = blockedFrom(p);
+          empty="No administrators yet. You add them here — nobody signs up into an admin role."
+          columns={['Name', 'Role', 'Email', 'Status', '']}
+          rows={admins.map((admin) => {
+            const locked = lockedReason(admin, admins, selfEmail);
+            const confirming = removing === admin.id;
             return [
               <span key="n" className="flex items-center gap-2 font-medium text-text-primary">
-                {p.role === 'super_admin' ? (
+                {admin.role === 'platform_owner' ? (
                   <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-accent" strokeWidth={2.2} />
                 ) : null}
-                {p.name}
+                {admin.displayName ?? admin.email}
               </span>,
-              <span key="r" className="whitespace-nowrap text-text-secondary">
-                {meta.label}
-                {isReadOnly(p.role) ? (
-                  <span className="ml-1.5 text-2xs text-text-faint">read-only</span>
-                ) : null}
-              </span>,
+              admin.role ? (
+                <select
+                  key="r"
+                  aria-label={`Role for ${admin.displayName ?? admin.email}`}
+                  title={locked ?? undefined}
+                  value={admin.role}
+                  disabled={locked !== null || busy !== null}
+                  onChange={(e) =>
+                    void call(`role:${admin.id}`, {
+                      action: 'update',
+                      id: admin.id,
+                      role: e.target.value,
+                    }).then((answer) => replace(answer?.admin))
+                  }
+                  className="h-8 rounded-sm border border-hairline/15 bg-canvas-soft px-2 text-xs disabled:opacity-60"
+                >
+                  {roles.map((r) => (
+                    <option key={r} value={r}>
+                      {ADMIN_ROLE_COPY[r].label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span key="r" className="text-xs text-text-muted">
+                  {admin.roleRaw}
+                </span>
+              ),
               <code key="e" className="text-xs text-text-muted">
-                {p.email}
+                {admin.email}
               </code>,
-              <span key="a" className="text-xs text-text-muted">
-                {p.addedBy}
-              </span>,
-              <span key="c" className="tabular text-text-muted">
-                {meta.capabilities.length}
-              </span>,
-              <button
-                key="x"
-                type="button"
-                disabled={blocked !== null}
-                title={blocked ?? 'Remove'}
-                onClick={() => setPeople((prev) => prev.filter((q) => q.id !== p.id))}
-                className={cn(
-                  'rounded-xs p-1 transition',
-                  blocked
-                    ? 'cursor-not-allowed text-text-faint/50'
-                    : 'text-text-faint hover:bg-danger-wash hover:text-danger',
-                )}
-              >
-                <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
-              </button>,
+              admin.suspended ? (
+                <Pill key="s" tone="bad">
+                  Suspended
+                </Pill>
+              ) : (
+                <Pill key="s" tone="good">
+                  Active
+                </Pill>
+              ),
+              confirming ? (
+                <span key="x" className="flex items-center justify-end gap-1.5 whitespace-nowrap">
+                  <span className="text-2xs text-text-muted">Remove?</span>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    loading={busy === `remove:${admin.id}`}
+                    onClick={() =>
+                      void call(`remove:${admin.id}`, { action: 'remove', id: admin.id }).then(
+                        (answer) => {
+                          if (!answer?.removed) return;
+                          setAdmins((prev) => prev.filter((a) => a.id !== admin.id));
+                          setRemoving(null);
+                        },
+                      )
+                    }
+                  >
+                    Yes
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setRemoving(null)}>
+                    No
+                  </Button>
+                </span>
+              ) : (
+                <span key="x" className="flex items-center justify-end gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title={locked ?? undefined}
+                    disabled={locked !== null || busy !== null}
+                    loading={busy === `suspend:${admin.id}`}
+                    onClick={() =>
+                      void call(`suspend:${admin.id}`, {
+                        action: 'update',
+                        id: admin.id,
+                        suspended: !admin.suspended,
+                      }).then((answer) => replace(answer?.admin))
+                    }
+                  >
+                    {admin.suspended ? 'Reinstate' : 'Suspend'}
+                  </Button>
+                  <button
+                    type="button"
+                    disabled={locked !== null || busy !== null}
+                    title={locked ?? 'Remove'}
+                    aria-label={`Remove ${admin.displayName ?? admin.email}`}
+                    onClick={() => setRemoving(admin.id)}
+                    className="rounded-xs p-1.5 text-text-faint transition hover:bg-danger-wash hover:text-danger disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-faint"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                  </button>
+                </span>
+              ),
             ];
           })}
-          align={[4, 5]}
+          align={[4]}
         />
       </Panel>
 
       <Note tone="warn">
-        <span className="font-semibold">The last owner can never be removed.</span> Try it — the
-        control is disabled while only one remains. An organisation with nobody who can grant access
-        cannot recover on its own, and what should have been a click becomes a support ticket.
-      </Note>
-
-      <Note>
-        Changes here are not saved yet. This screen shows how administrators will be managed, and
-        the rules rather than applying them — reload and the list returns to its seeded state.
+        <span className="font-semibold">The last platform owner cannot be removed.</span> Its
+        controls are disabled while only one remains. A platform with nobody who can grant access
+        cannot recover on its own.
       </Note>
     </>
   );

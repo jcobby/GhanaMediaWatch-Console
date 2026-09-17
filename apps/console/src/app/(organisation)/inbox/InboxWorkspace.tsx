@@ -1,7 +1,16 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { MapPin, Clock, Video, Image as ImageIcon, Check, Download, Crosshair } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import {
+  MapPin,
+  Clock,
+  Video,
+  Image as ImageIcon,
+  Check,
+  Download,
+  Crosshair,
+  PanelLeftOpen,
+} from 'lucide-react';
 import {
   canLicenseReport,
   categoryHue,
@@ -15,23 +24,27 @@ import {
   planFor,
   verificationMeta,
   type Incident,
+  type IncidentCategory,
   type OrganisationAccount,
   type ResponseAction,
   type ResponseEntry,
+  type Severity,
 } from '@dawuro/core';
 import { Badge, Button } from '@/components/ui';
 import { MediaFrame } from '@/components/MediaFrame';
 import { mediaHref } from '@/lib/mediaHref';
 import { ResponsePanel } from '@/components/ResponsePanel';
+import { NotesPanel } from '@/components/NotesPanel';
+import { SendToEditor } from '@/components/SendToEditor';
 import {
   AssuranceBadge,
   HandlingNotice,
   SeverityBadge,
   VerificationBadge,
 } from '@/components/TrustBadges';
+import { groupReports } from '@/lib/queueGroups';
 import { cn } from '@/lib/cn';
-
-type Filter = 'offered' | 'licensed' | 'all';
+import { InboxFilters, type InboxFilterState, type Status } from './InboxFilters';
 
 /**
  * The organisation's report inbox.
@@ -45,6 +58,12 @@ type Filter = 'offered' | 'licensed' | 'all';
  * height from the viewport: a hardcoded `calc(100vh - Xrem)` is only correct
  * until the header changes, and when it is wrong the whole document scrolls and
  * takes the navigation with it.
+ *
+ * **Finding one report is a first-class job here, not only working through
+ * them.** Three tabs were the whole of it, so an officer with twenty-two
+ * waiting and a question about Kaneshie read every row. Search, two facets and
+ * three groupings are in the queue head, arranged the way the verification desk
+ * arranges its own.
  */
 export function InboxWorkspace({
   reports,
@@ -56,21 +75,157 @@ export function InboxWorkspace({
   const plan = planFor(organisation.tier);
   const unlimited = isUnlimited(plan);
   const [licensed, setLicensed] = useState<Set<string>>(new Set());
-  const [filter, setFilter] = useState<Filter>('offered');
-  const [selectedId, setSelectedId] = useState<string | null>(reports[0]?.id ?? null);
+  /** The report a purchase is in flight for, so its button can say so. */
+  const [buying, setBuying] = useState<string | null>(null);
+  const [purchaseError, setPurchaseError] = useState<string | null>(null);
+
+  /*
+   * Licensing, sent to the service.
+   *
+   * This used to be `setLicensed(...)` alone: the row moved to the Licensed tab,
+   * the button said "Downloaded", and nothing left the browser. A reload brought
+   * the report back unlicensed, and an officer who had bought four reports had
+   * bought none.
+   *
+   * The local state is set **after** the service confirms, never before. An
+   * optimistic tick here is a claim that money changed hands, and it is the one
+   * claim this screen must not make on the strength of a click.
+   */
+  const license = useCallback(async (incidentId: string) => {
+    setBuying(incidentId);
+    setPurchaseError(null);
+    try {
+      const response = await fetch(`/api/org/incidents/${encodeURIComponent(incidentId)}/license`, {
+        method: 'POST',
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        /*
+         * The service's own sentence. A report whose verification state forbids
+         * licensing and a subscription that cannot cover it are different
+         * answers, and only one of them is worth trying again.
+         */
+        setPurchaseError(
+          body && typeof body === 'object' && 'error' in body
+            ? String((body as { error: unknown }).error)
+            : 'That could not be licensed.',
+        );
+        return;
+      }
+      setLicensed((prev) => new Set(prev).add(incidentId));
+    } catch {
+      setPurchaseError('The console could not be reached. Nothing was charged.');
+    } finally {
+      setBuying(null);
+    }
+  }, []);
+
+  const [filters, setFilters] = useState<InboxFilterState>({
+    status: 'offered',
+    query: '',
+    category: 'all',
+    severity: 'all',
+    grouping: 'recent',
+    dateOrder: 'newest',
+  });
+  /*
+   * Whether the queue is showing. The preview is where the footage is judged,
+   * and on a laptop the 340px queue is most of what stands between it and a
+   * usable size.
+   */
+  const [queueOpen, setQueueOpen] = useState(true);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   /*
    * Append-only, keyed by report. Kept here rather than in the preview so a
    * response is not lost when an officer clicks away mid-triage.
    */
   const [responses, setResponses] = useState<Record<string, ResponseEntry[]>>({});
 
-  const visible = useMemo(() => {
-    if (filter === 'licensed') return reports.filter((r) => licensed.has(r.id));
-    if (filter === 'offered') return reports.filter((r) => !licensed.has(r.id));
-    return reports;
-  }, [filter, reports, licensed]);
+  /*
+   * Newest first, which is the order an inbox is read in.
+   *
+   * Nothing ranks these — routing delivered them because the interests matched,
+   * and the server sends no ordering — so the one honest default is when it was
+   * filmed. A report with no capture date sorts last rather than first: it has
+   * no claim to being the most recent thing here.
+   */
+  const ordered = useMemo(
+    () =>
+      [...reports].sort((a, b) => {
+        if (!a.capturedAtIso) return 1;
+        if (!b.capturedAtIso) return -1;
+        return b.capturedAtIso.localeCompare(a.capturedAtIso);
+      }),
+    [reports],
+  );
 
-  const selected = reports.find((r) => r.id === selectedId) ?? visible[0] ?? null;
+  const counts: Record<Status, number> = {
+    offered: reports.filter((r) => !licensed.has(r.id)).length,
+    licensed: licensed.size,
+    all: reports.length,
+  };
+
+  /** The tab's own list, before the facets narrow it. */
+  const inTab = useMemo(() => {
+    if (filters.status === 'licensed') return ordered.filter((r) => licensed.has(r.id));
+    if (filters.status === 'offered') return ordered.filter((r) => !licensed.has(r.id));
+    return ordered;
+  }, [filters.status, ordered, licensed]);
+
+  /*
+   * The facets are built from what is in the tab, with counts — so every option
+   * offered matches at least one report, and choosing one can never produce an
+   * empty list the operator has to undo.
+   */
+  const categories = useMemo(() => tally(inTab.map((r) => r.category)), [inTab]);
+  const severities = useMemo(() => tally(inTab.map((r) => r.severity)), [inTab]);
+
+  const visible = useMemo(() => {
+    const needle = filters.query.trim().toLowerCase();
+    return inTab.filter((incident) => {
+      if (filters.category !== 'all' && incident.category !== filters.category) return false;
+      if (filters.severity !== 'all' && incident.severity !== filters.severity) return false;
+      if (!needle) return true;
+      /*
+       * What somebody actually remembers about a report: roughly what it said,
+       * roughly where it was, or the reference off an email. The category is in
+       * there too, so typing "flood" works before the facet is opened.
+       */
+      return [
+        incident.description,
+        formatPlace(incident.location),
+        incident.reportId,
+        categoryLabel(incident.category),
+      ]
+        .filter(Boolean)
+        .some((field) => String(field).toLowerCase().includes(needle));
+    });
+  }, [inTab, filters.category, filters.severity, filters.query]);
+
+  const groups = useMemo(
+    () =>
+      groupReports(visible, filters.grouping, filters.dateOrder, {
+        capturedAtIso: (incident) => incident.capturedAtIso,
+        category: (incident) => incident.category,
+      }),
+    [visible, filters.grouping, filters.dateOrder],
+  );
+
+  /*
+   * Null until an officer picks something, which is not the same as nothing
+   * being selected.
+   *
+   * Seeded with `reports[0]`, the preview could sit on a report the filters had
+   * removed from the list beside it — a screen showing one thing on the left and
+   * a different one on the right, with no way to tell which was being acted on.
+   * The default follows whatever is at the top of the list as displayed; an
+   * explicit choice does not, so narrowing rearranges the list around an officer
+   * rather than moving them off what they are reading.
+   */
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const firstShown = groups[0]?.items[0] ?? null;
+  const selected =
+    (selectedId ? (reports.find((r) => r.id === selectedId) ?? null) : null) ?? firstShown;
 
   /*
    * Receiving a report costs nothing — routing chose to show it, and an
@@ -79,147 +234,190 @@ export function InboxWorkspace({
    */
   const chargePerDownload = downloadCharge(plan);
 
-  const counts = {
-    offered: reports.filter((r) => !licensed.has(r.id)).length,
-    licensed: licensed.size,
-    all: reports.length,
-  };
-
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
+      {/* Collapsed, the queue keeps its count — hidden with no way back is a
+          worse bug than the width it was taking. */}
+      {!queueOpen ? (
+        <button
+          type="button"
+          onClick={() => setQueueOpen(true)}
+          title="Show the queue"
+          className="flex w-11 shrink-0 flex-col items-center gap-2 border-r border-hairline/[0.07] py-3 transition hover:bg-canvas-raise/60"
+        >
+          <PanelLeftOpen className="h-4 w-4 text-text-muted" strokeWidth={2} />
+          <span className="tabular text-2xs font-semibold text-text-secondary">
+            {visible.length}
+          </span>
+          <span className="[writing-mode:vertical-rl] text-2xs uppercase tracking-[0.14em] text-text-faint">
+            Reports
+          </span>
+        </button>
+      ) : null}
+
       {/* Queue */}
-      <div className="flex w-[340px] shrink-0 flex-col border-r border-hairline/[0.07]">
-        <div className="shrink-0 px-3 py-2.5">
-          <div className="flex gap-0.5 rounded-sm bg-canvas-raise/70 p-0.5">
-            {(['offered', 'licensed', 'all'] as const).map((key) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => setFilter(key)}
-                aria-pressed={filter === key}
-                className={cn(
-                  'flex flex-1 items-center justify-center gap-1.5 rounded-xs py-1.5 text-xs capitalize transition',
-                  filter === key
-                    ? 'bg-canvas-soft font-medium text-text-primary shadow-sm'
-                    : 'text-text-muted hover:text-text-primary',
-                )}
-              >
-                {key}
-                <span className="tabular text-2xs text-text-faint">{counts[key]}</span>
-              </button>
-            ))}
-          </div>
-        </div>
+      <div
+        className={cn(
+          'flex w-[340px] shrink-0 flex-col border-r border-hairline/[0.07]',
+          queueOpen ? '' : 'hidden',
+        )}
+      >
+        <InboxFilters
+          state={filters}
+          onChange={setFilters}
+          counts={counts}
+          categories={categories}
+          severities={severities}
+          shown={visible.length}
+          total={reports.length}
+          filtersOpen={filtersOpen}
+          onFiltersOpen={setFiltersOpen}
+          onCollapse={() => setQueueOpen(false)}
+        />
 
         <ul className="min-h-0 flex-1 overflow-y-auto">
           {visible.length === 0 ? (
             <li className="px-4 py-12 text-center text-xs text-text-faint">
-              {filter === 'licensed' ? 'Nothing downloaded yet.' : 'Nothing waiting.'}
+              {/*
+                Three different silences, told apart.
+
+                "Nothing waiting" under an active search is a lie about the
+                queue — the reports are there and the filter is hiding them, and
+                an officer who reads it stops looking.
+              */}
+              {inTab.length > 0
+                ? 'No report here matches that.'
+                : filters.status === 'licensed'
+                  ? 'Nothing licensed yet.'
+                  : 'Nothing waiting.'}
             </li>
           ) : (
-            visible.map((incident) => {
-              const active = selected?.id === incident.id;
-              return (
-                <li key={incident.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(incident.id)}
-                    aria-current={active ? 'true' : undefined}
-                    className={cn(
-                      'relative flex w-full gap-3 px-3 py-3 text-left transition',
-                      active ? 'bg-accent-wash/45' : 'hover:bg-canvas-raise/50',
-                    )}
-                  >
-                    {active ? (
-                      <span
-                        aria-hidden
-                        className="absolute inset-y-0 left-0 w-[3px] rounded-r-pill bg-accent"
-                      />
-                    ) : null}
-                    <span className="relative h-[52px] w-[42px] shrink-0 overflow-hidden rounded-xs bg-canvas-raise">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={incident.media.posterUrl}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                      {incident.media.kind === 'video' ? (
-                        <span className="absolute bottom-0.5 right-0.5 rounded-[3px] bg-black/70 p-[3px]">
-                          <Video className="h-2.5 w-2.5 text-white" strokeWidth={2.5} />
-                        </span>
-                      ) : null}
+            groups.map((group) => (
+              <li key={group.key}>
+                {/* Sticky, because the value of a group is knowing which one you
+                    are in, and a queue scrolls past the heading in three rows. */}
+                {group.label ? (
+                  <p className="sticky top-0 z-10 flex items-baseline gap-2 border-b border-hairline/[0.07] bg-canvas/95 px-3 py-1.5 backdrop-blur">
+                    <span className="text-2xs font-semibold uppercase tracking-[0.12em] text-text-secondary">
+                      {group.label}
                     </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5">
-                        <span
-                          aria-hidden
-                          className="h-1.5 w-1.5 shrink-0 rounded-pill"
-                          style={{
-                            backgroundColor: categoryHue(incident.category),
-                          }}
-                        />
-                        <span className="truncate text-2xs font-medium uppercase tracking-wide text-text-muted">
-                          {categoryLabel(incident.category)}
-                        </span>
-                        <span className="ml-auto shrink-0 text-2xs tabular text-text-faint">
-                          {formatRelativeTime(incident.capturedAtIso)}
-                        </span>
-                        {licensed.has(incident.id) ? (
-                          <Check className="h-3 w-3 shrink-0 text-success" strokeWidth={3} />
-                        ) : null}
-                      </span>
+                    <span className="tabular text-2xs text-text-faint">{group.items.length}</span>
+                  </p>
+                ) : null}
 
-                      {/* Severity and assurance decide whether this is worth
-                          opening at all, so they sit on the row rather than
-                          behind a click. */}
-                      <span className="mt-1 flex flex-wrap items-center gap-1">
-                        <SeverityBadge severity={incident.severity} />
-                        <AssuranceBadge assurance={incident.assurance} showLabel={false} />
-                        <VerificationBadge state={incident.verification} />
-                      </span>
-                      <span className="mt-1 block line-clamp-2 text-xs leading-[1.45] text-text-secondary">
-                        {incident.description}
-                      </span>
+                <ul>
+                  {group.items.map((incident) => {
+                    const active = selected?.id === incident.id;
+                    const where = formatPlace(incident.location);
+                    return (
+                      <li key={incident.id}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedId(incident.id)}
+                          aria-current={active ? 'true' : undefined}
+                          className={cn(
+                            'relative flex w-full gap-3 px-3 py-3 text-left transition',
+                            active ? 'bg-accent-wash/45' : 'hover:bg-canvas-raise/50',
+                          )}
+                        >
+                          {active ? (
+                            <span
+                              aria-hidden
+                              className="absolute inset-y-0 left-0 w-[3px] rounded-r-pill bg-accent"
+                            />
+                          ) : null}
+                          <span className="relative h-[52px] w-[42px] shrink-0 overflow-hidden rounded-xs bg-canvas-raise">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={incident.media.posterUrl}
+                              alt=""
+                              className="h-full w-full object-cover"
+                            />
+                            {incident.media.kind === 'video' ? (
+                              <span className="absolute bottom-0.5 right-0.5 rounded-[3px] bg-black/70 p-[3px]">
+                                <Video className="h-2.5 w-2.5 text-white" strokeWidth={2.5} />
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5">
+                              <span
+                                aria-hidden
+                                className="h-1.5 w-1.5 shrink-0 rounded-pill"
+                                style={{
+                                  backgroundColor: categoryHue(incident.category),
+                                }}
+                              />
+                              <span className="truncate text-2xs font-medium uppercase tracking-wide text-text-muted">
+                                {categoryLabel(incident.category)}
+                              </span>
+                              <span className="ml-auto shrink-0 text-2xs tabular text-text-faint">
+                                {formatRelativeTime(incident.capturedAtIso)}
+                              </span>
+                              {licensed.has(incident.id) ? (
+                                <Check className="h-3 w-3 shrink-0 text-success" strokeWidth={3} />
+                              ) : null}
+                            </span>
 
-                      {/*
-                       * Length, place and exact time on the row itself.
-                       * An officer triaging a queue is deciding what to open,
-                       * and those three answer it: a 4-second clip from
-                       * yesterday two districts away is not worth a click,
-                       * and nothing above this line says so.
-                       */}
-                      <span className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-2xs text-text-faint">
-                        {incident.media.durationMs ? (
-                          <span className="tabular flex items-center gap-1">
-                            <Video className="h-2.5 w-2.5" />
-                            {formatDuration(incident.media.durationMs)}
+                            {/* Severity and assurance decide whether this is worth
+                                opening at all, so they sit on the row rather than
+                                behind a click. */}
+                            <span className="mt-1 flex flex-wrap items-center gap-1">
+                              <SeverityBadge severity={incident.severity} />
+                              <AssuranceBadge assurance={incident.assurance} showLabel={false} />
+                              <VerificationBadge state={incident.verification} />
+                            </span>
+                            <span className="mt-1 block line-clamp-2 text-xs leading-[1.45] text-text-secondary">
+                              {incident.description}
+                            </span>
+
+                            {/*
+                             * Length, place and exact time on the row itself.
+                             * An officer triaging a queue is deciding what to open,
+                             * and those three answer it: a 4-second clip from
+                             * yesterday two districts away is not worth a click,
+                             * and nothing above this line says so.
+                             *
+                             * The place falls back to the fix, because the service
+                             * names no place on any report it holds — reading the
+                             * label alone left the location blank on footage whose
+                             * whole claim is that it was filmed somewhere.
+                             */}
+                            <span className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-2xs text-text-faint">
+                              {incident.media.durationMs ? (
+                                <span className="tabular flex items-center gap-1">
+                                  <Video className="h-2.5 w-2.5" />
+                                  {formatDuration(incident.media.durationMs)}
+                                </span>
+                              ) : null}
+                              {where ? (
+                                <span className="flex min-w-0 items-center gap-1">
+                                  <MapPin className="h-2.5 w-2.5 shrink-0" />
+                                  <span className="truncate">{where}</span>
+                                </span>
+                              ) : null}
+                              {formatExactCapture(
+                                incident.capturedAtIso,
+                                incident.capturedAtPrecision,
+                              ) ? (
+                                <span className="tabular flex items-center gap-1">
+                                  <Clock className="h-2.5 w-2.5" />
+                                  {formatExactCapture(
+                                    incident.capturedAtIso,
+                                    incident.capturedAtPrecision,
+                                  )}
+                                </span>
+                              ) : null}
+                            </span>
                           </span>
-                        ) : null}
-                        {incident.location.label ? (
-                          <span className="flex min-w-0 items-center gap-1">
-                            <MapPin className="h-2.5 w-2.5 shrink-0" />
-                            <span className="truncate">{incident.location.label}</span>
-                          </span>
-                        ) : null}
-                        {formatExactCapture(
-                          incident.capturedAtIso,
-                          incident.capturedAtPrecision,
-                        ) ? (
-                          <span className="tabular flex items-center gap-1">
-                            <Clock className="h-2.5 w-2.5" />
-                            {formatExactCapture(
-                              incident.capturedAtIso,
-                              incident.capturedAtPrecision,
-                            )}
-                          </span>
-                        ) : null}
-                      </span>
-                    </span>
-                  </button>
-                  <span className="mx-3 block h-px bg-hairline/[0.05]" />
-                </li>
-              );
-            })
+                        </button>
+                        <span className="mx-3 block h-px bg-hairline/[0.05]" />
+                      </li>
+                    );
+                  })}
+                </ul>
+              </li>
+            ))
           )}
         </ul>
       </div>
@@ -233,7 +431,9 @@ export function InboxWorkspace({
           charge={chargePerDownload}
           unlimited={unlimited}
           takenThisPeriod={organisation.reportsUsedThisPeriod}
-          onLicense={() => setLicensed((prev) => new Set(prev).add(selected.id))}
+          onLicense={() => void license(selected.id)}
+          buying={buying === selected.id}
+          purchaseError={purchaseError}
           responses={responses[selected.id] ?? []}
           onRecord={(action, note) =>
             setResponses((prev) => ({
@@ -263,6 +463,15 @@ export function InboxWorkspace({
   );
 }
 
+/** Count each distinct value, commonest first. Used to build the facets. */
+function tally<T extends IncidentCategory | Severity>(values: T[]): { value: T; count: number }[] {
+  const counts = new Map<T, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
 function PreviewPane({
   incident,
   licensed,
@@ -270,15 +479,28 @@ function PreviewPane({
   unlimited,
   takenThisPeriod,
   onLicense,
+  buying,
+  purchaseError,
   responses,
   onRecord,
 }: {
   incident: Incident;
   licensed: boolean;
-  charge: number;
+  /**
+   * What one download costs, or null when the plan could not be read.
+   *
+   * Null is not zero. A price of zero says the report is free; not knowing the
+   * price says nothing, and the button below says so rather than inviting a
+   * click whose cost will turn up on an invoice.
+   */
+  charge: number | null;
   unlimited: boolean;
   takenThisPeriod: number;
   onLicense: () => void;
+  /** A purchase for this report is in flight. */
+  buying: boolean;
+  /** Why the last purchase failed, in the service's own words. */
+  purchaseError: string | null;
   responses: ResponseEntry[];
   onRecord: (action: ResponseAction, note: string) => void;
 }) {
@@ -304,7 +526,7 @@ function PreviewPane({
                   {incident.reportId}
                 </span>
                 <SeverityBadge severity={incident.severity} />
-                {licensed ? <Badge tone="success">Downloaded</Badge> : null}
+                {licensed ? <Badge tone="success">Licensed</Badge> : null}
                 <Badge tone="neutral">
                   {incident.media.kind === 'video' ? (
                     <Video className="h-2.5 w-2.5" />
@@ -357,7 +579,7 @@ function PreviewPane({
               {when ?? 'Hidden by the reporter'}
             </Fact>
             <Fact icon={<MapPin className="h-3.5 w-3.5" />} label="Place">
-              {incident.location.label ?? 'Hidden by the reporter'}
+              {formatPlace(incident.location) ?? 'Hidden by the reporter'}
             </Fact>
             <Fact
               icon={<Crosshair className="h-3.5 w-3.5" />}
@@ -370,9 +592,25 @@ function PreviewPane({
 
           <HandlingNotice handling={incident.handling} className="mt-3" />
 
+          {/* Notes are the organisation's own working record, licensed or not. */}
+          <div className="mt-4">
+            <NotesPanel incidentId={incident.id} />
+          </div>
+
           {/* Only once it has been paid for. Recording a response to footage
               you have not licensed would be claiming work on someone else's
               evidence. */}
+          {/* Once licensed, it can be sent to the editor to publish under this name. */}
+          {licensed ? (
+            <div className="mt-4">
+              <SendToEditor
+                incidentId={incident.id}
+                section={incident.section}
+                verification={incident.verification}
+              />
+            </div>
+          ) : null}
+
           {licensed ? (
             <div className="mt-4">
               <ResponsePanel
@@ -396,7 +634,7 @@ function PreviewPane({
           <div className="min-w-0 flex-1">
             {licensed ? (
               <>
-                <p className="text-sm font-medium text-success">Downloaded</p>
+                <p className="text-sm font-medium text-success">Licensed</p>
                 <p className="mt-0.5 text-xs text-text-muted">
                   The watermark is gone and the original file is yours to use.
                 </p>
@@ -409,6 +647,13 @@ function PreviewPane({
                   <span className="tabular">{takenThisPeriod}</span> taken this year.
                 </p>
               </>
+            ) : charge === null ? (
+              <>
+                <p className="text-sm font-medium">Price unavailable</p>
+                <p className="mt-0.5 text-xs text-text-muted">
+                  We could not read your subscription, so we cannot say what this download costs.
+                </p>
+              </>
             ) : (
               <>
                 <p className="tabular text-sm font-semibold">{formatCedis(charge)}</p>
@@ -418,6 +663,11 @@ function PreviewPane({
                 </p>
               </>
             )}
+            {/* The failure sits where the price does, so a refusal and a charge
+                are never on screen together saying different things. */}
+            {purchaseError ? (
+              <p className="mt-1.5 text-xs leading-relaxed text-danger">{purchaseError}</p>
+            ) : null}
           </div>
 
           <Button
@@ -429,15 +679,39 @@ function PreviewPane({
              * A rejected or disputed report must not be purchasable however
              * much a subscriber wants it.
              */
-            disabled={!licensed && !canLicenseReport(incident.verification)}
+            /*
+             * And not while the price is unknown. A download button that cannot
+             * state its cost is one somebody presses and then discovers the
+             * charge for.
+             */
+            disabled={
+              buying ||
+              (!licensed &&
+                (!canLicenseReport(incident.verification) || (!unlimited && charge === null)))
+            }
             className="shrink-0"
           >
             <Download className="h-3.5 w-3.5" />
-            {licensed
-              ? 'Download original'
-              : unlimited
-                ? 'Download'
-                : `Pay ${formatCedis(charge)} and download`}
+            {/*
+              One word for the act, one for the file.
+
+              The button said "Download", then "Licensing…" while it worked, then
+              "Downloaded" — three words for two different things, and the one
+              that matters was the quiet one. Pressing this *licenses* the
+              report: the organisation is charged and the reporter is paid. The
+              download is what licensing entitles you to, and afterwards it is
+              the only thing left to do, which is why that is the one case where
+              the button says download.
+            */}
+            {buying
+              ? 'Licensing…'
+              : licensed
+                ? 'Download original'
+                : unlimited
+                  ? 'License and download'
+                  : charge === null
+                    ? 'Price unavailable'
+                    : `Pay ${formatCedis(charge)} and license`}
           </Button>
         </div>
       </footer>

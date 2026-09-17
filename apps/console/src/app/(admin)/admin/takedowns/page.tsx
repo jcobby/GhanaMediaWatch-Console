@@ -10,19 +10,22 @@ import {
   StatGrid,
   Table,
 } from '@/components/admin/Widgets';
-import { RowAction, RowActions } from '@/components/admin/RowAction';
 import { requireSession } from '@/lib/session';
-import { NotWired, Outage, load } from '@/components/ui';
+import { Outage, load } from '@/components/ui';
 import { platform } from '@/lib/consoleApi';
+import { TakedownDecision } from './TakedownDecision';
 
 /**
  * Requests from people who appear in footage.
  *
- * Simulated. Ghana's Data Protection Act (Act 843) gives a data subject rights
- * this platform has to be able to honour, and the hard part is not the intake
- * form — it is what happens to a report a third party has already licensed and
- * published. That question is unresolved, so the screen states it rather than
- * implying a process exists.
+ * Ghana's Data Protection Act (Act 843) gives a data subject rights this
+ * platform has to be able to honour. Decisions are sent to the service now, with
+ * a reason required for both answers — a refusal nobody can explain is not one
+ * anybody can account for later.
+ *
+ * The hard part was never the intake form: it is what happens to a report a
+ * third party has already licensed and published. That question is still
+ * unresolved, so the screen states it rather than implying a process exists.
  */
 export default async function Page() {
   const session = await requireSession();
@@ -49,7 +52,6 @@ export default async function Page() {
           title="Takedowns and right of reply"
           blurb="Requests from people who appear in footage."
         />
-        <NotWired what="Upholding or refusing a takedown request" />
         <Outage error={result.error} retryHref="/admin/takedowns" />
       </PageShell>
     );
@@ -75,7 +77,13 @@ export default async function Page() {
           hint="Licensed and out in the world"
         />
         <Stat label="Upheld" value={String(REQUESTS.filter((r) => r.state === 'upheld').length)} />
-        <Stat label="Median age" value="9 d" />
+        {/*
+          "Median age — 9 d" used to sit here, and it was invented. A made-up
+          figure beside three real counts is the worst place for one: it reads
+          with exactly the authority of the numbers either side of it, on a
+          screen about statutory deadlines. Refused is a real count.
+        */}
+        <Stat label="Refused" value={String(REQUESTS.filter((r) => r.state === 'refused').length)} />
       </StatGrid>
 
       <Panel
@@ -115,17 +123,7 @@ export default async function Page() {
               {r.state}
             </Pill>,
             r.state === 'open' ? (
-              <RowActions key="a">
-                <RowAction
-                  label="Uphold"
-                  done="Upheld"
-                  tone="primary"
-                  confirm={
-                    r.published ? 'Already published — withdraw anyway?' : 'Remove the report?'
-                  }
-                />
-                <RowAction label="Refuse" done="Refused" confirm="Record a refusal?" />
-              </RowActions>
+              <TakedownDecision key="a" takedownId={r.id} published={r.published} />
             ) : (
               <span key="a" className="text-2xs text-text-faint">
                 Decided

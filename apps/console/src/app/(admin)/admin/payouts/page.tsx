@@ -1,38 +1,31 @@
 import { redirect } from 'next/navigation';
-import {
-  PLATFORM_FEE_RATE,
-  formatCedis,
-  roleCan,
-  type CommissionEntry,
-  type PayoutBatch,
-} from '@dawuro/core';
+import { PLATFORM_FEE_RATE, formatCedis, roleCan } from '@dawuro/core';
 import {
   Bar,
   Note,
   PageIntro,
   PageShell,
   Panel,
-  Pill,
   Split,
   Stat,
   StatGrid,
-  Table,
 } from '@/components/admin/Widgets';
-import { RowAction } from '@/components/admin/RowAction';
+import { PayoutsWorkspace } from '@/components/payouts/PayoutsWorkspace';
+import { Outage, load } from '@/components/ui';
 import { requireSession } from '@/lib/session';
+import { platform } from '@/lib/consoleApi';
+import {
+  needsAttention,
+  normalisePayoutRun,
+  sentPesewas,
+  summariseUnpaid,
+  type Network,
+} from '@/lib/payouts';
 
 /** The floor a balance must clear to be paid. Mirrors the phone's own copy. */
 const PAYOUT_THRESHOLD_PESEWAS = 10_000;
-import { NotWired, Outage, load } from '@/components/ui';
-import { platform } from '@/lib/consoleApi';
 
-/** Where reporters are paid. Mobile money is how Ghana pays. */
-const DESTINATIONS = [
-  { name: 'MTN MoMo', share: 0.68 },
-  { name: 'Telecel Cash', share: 0.19 },
-  { name: 'AirtelTigo Money', share: 0.11 },
-  { name: 'Bank transfer', share: 0.02 },
-];
+const NETWORKS: Network[] = ['MTN MoMo', 'Telecel Cash', 'AirtelTigo Money', 'Unknown network'];
 
 export default async function Page() {
   const session = await requireSession();
@@ -46,36 +39,54 @@ export default async function Page() {
    * Every figure below is integer pesewas exactly as the API reports them.
    */
   const result = await load(async () => {
-    const batches = await platform.payouts<PayoutBatch>();
-    return {
-      batches,
-      // Commission lines where a batch embeds them. A batch that does not
-      // contributes none rather than an invented ledger.
-      ledger: batches.flatMap(
-        (b) => (b as PayoutBatch & { entries?: CommissionEntry[] }).entries ?? [],
-      ),
-    };
+    const batches = (await platform.payouts<unknown>()).map((batch) => normalisePayoutRun(batch));
+    /*
+     * What a new batch would contain — the same read the platform copy makes.
+     *
+     * This page omitted it, so the two mounts of `PayoutsWorkspace` showed
+     * different things for the same job. Allowed to fail on its own: it is
+     * context for the release button, not the subject of the page, and an
+     * operator must still be able to see and release existing batches if this
+     * read goes down. Null says "could not ask", which the screen states rather
+     * than printing a zero — on a money screen those are different claims.
+     */
+    const owed = await platform
+      .commissions<unknown>()
+      .then(summariseUnpaid)
+      .catch(() => null);
+    return { batches, owed };
   });
 
   if (!result.ok) {
     return (
       <PageShell>
         <PageIntro title="Payouts" blurb="What reporters are owed, and releasing it." />
-        <NotWired what="Releasing a payout" />
         <Outage error={result.error} retryHref="/admin/payouts" />
       </PageShell>
     );
   }
 
-  const PAYOUT_BATCHES = result.data.batches;
-  const COMMISSION_LEDGER = result.data.ledger;
-  const draft = PAYOUT_BATCHES.find((b) => b.status === 'draft');
-  const earned = COMMISSION_LEDGER.filter((c) => c.status === 'earned');
-  const owed = earned.reduce((t, c) => t + c.amountPesewas, 0);
-  const settled = PAYOUT_BATCHES.filter((b) => b.status === 'settled').reduce(
-    (t, b) => t + b.totalPesewas,
-    0,
+  const { batches: runs, owed } = result.data;
+  const openTotal = runs
+    .filter((run) => run.status === 'draft')
+    .reduce((total, run) => total + run.totalPesewas, 0);
+  const attention = runs.reduce((total, run) => total + needsAttention(run), 0);
+  const sent = runs.reduce((total, run) => total + sentPesewas(run), 0);
+
+  /*
+   * Where payments went, counted from the payments themselves.
+   *
+   * This panel used to show fixed shares — 68% MTN, 19% Telecel — typed into
+   * the page. They described no payment anyone made. These are counted from the
+   * numbers each sent payment was addressed to.
+   */
+  const delivered = runs.flatMap((run) =>
+    run.payments.filter((p) => p.status === 'sent' || p.status === 'paid'),
   );
+  const byNetwork = NETWORKS.map((network) => ({
+    network,
+    count: delivered.filter((p) => p.network === network).length,
+  })).filter((row) => row.count > 0);
 
   return (
     <PageShell>
@@ -83,13 +94,17 @@ export default async function Page() {
 
       <StatGrid>
         <Stat
-          label="Next batch"
-          value={draft ? formatCedis(draft.totalPesewas) : '—'}
-          tone="warn"
-          hint={draft ? `${draft.reporterCount} reporters` : 'No batch open'}
+          label="Ready to release"
+          value={formatCedis(openTotal)}
+          tone={openTotal > 0 ? 'warn' : 'neutral'}
         />
-        <Stat label="Owed, unbatched" value={formatCedis(owed)} hint={`${earned.length} entries`} />
-        <Stat label="Settled to date" value={formatCedis(settled)} tone="good" />
+        <Stat
+          label="Needs attention"
+          value={String(attention)}
+          tone={attention > 0 ? 'bad' : 'good'}
+          hint="Failed or held payments"
+        />
+        <Stat label="Sent to date" value={formatCedis(sent)} tone="good" />
         <Stat
           label="Platform share"
           value={`${Math.round(PLATFORM_FEE_RATE * 100)}%`}
@@ -98,44 +113,9 @@ export default async function Page() {
       </StatGrid>
 
       <Panel title="Batches" subtitle="A batch is released once, and never recomputed afterwards.">
-        <Table
-          empty="No payouts yet. A batch appears once reporters have earned enough to clear the payout floor."
-          columns={['Batch', 'Reporters', 'Total', 'Created', 'Settled', 'State', '']}
-          rows={PAYOUT_BATCHES.map((b) => [
-            <code key="i" className="text-xs text-text-primary">
-              {b.id}
-            </code>,
-            <span key="r" className="tabular text-text-muted">
-              {b.reporterCount}
-            </span>,
-            <span key="t" className="tabular font-medium">
-              {formatCedis(b.totalPesewas)}
-            </span>,
-            <span key="c" className="text-xs text-text-muted">
-              {new Date(b.createdAtIso).toLocaleDateString('en-GB')}
-            </span>,
-            <span key="s" className="text-xs text-text-muted">
-              {b.settledAtIso ? new Date(b.settledAtIso).toLocaleDateString('en-GB') : '—'}
-            </span>,
-            <Pill key="st" tone={b.status === 'settled' ? 'good' : 'warn'}>
-              {b.status}
-            </Pill>,
-            b.status === 'draft' ? (
-              <RowAction
-                key="a"
-                label="Release"
-                done="Released"
-                tone="primary"
-                confirm={`Pay ${formatCedis(b.totalPesewas)} to ${b.reporterCount} reporters?`}
-              />
-            ) : (
-              <span key="a" className="text-2xs text-text-faint">
-                Settled
-              </span>
-            ),
-          ])}
-          align={[1, 2, 6]}
-        />
+        <div className="p-4">
+          <PayoutsWorkspace runs={runs} unpaid={owed} embedded />
+        </div>
       </Panel>
 
       <Split>
@@ -143,70 +123,32 @@ export default async function Page() {
           title="Payout threshold"
           subtitle="A reporter is paid once they clear the floor, so small balances do not cost more in fees than they carry."
         >
-          <div className="space-y-3">
-            {/*
-              The policy, without a fabricated example.
-
-              This showed a "typical reporter balance" bar drawn from a seeded
-              earnings summary. There is no platform-wide earnings endpoint —
-              `/me/earnings` is the caller's own balance, which for an operator
-              is not a reporter's and is not typical of anything — so the bar
-              was an invented statistic sitting on the page where payouts are
-              released. The rule it illustrated is real and stays.
-            */}
-            <p className="text-xs leading-relaxed text-text-muted">
-              Below {formatCedis(PAYOUT_THRESHOLD_PESEWAS)} a reporter&rsquo;s balance rolls into
-              the next run rather than being sent, so a small balance does not cost more in fees
-              than it carries. The reporter sees this on their phone, so it is never a surprise.
-            </p>
-            <p className="text-2xs text-text-faint">
-              A breakdown of reporter balances is not available yet.
-            </p>
-          </div>
+          <p className="text-xs leading-relaxed text-text-muted">
+            Below {formatCedis(PAYOUT_THRESHOLD_PESEWAS)} a reporter&rsquo;s balance rolls into the
+            next run rather than being sent, so a small balance does not cost more in fees than it
+            carries. The reporter sees this on their phone, so it is never a surprise.
+          </p>
         </Panel>
 
-        <Panel title="Destinations" subtitle="Where the money actually goes.">
-          <div className="space-y-3">
-            {DESTINATIONS.map((d) => (
-              <Bar
-                key={d.name}
-                label={d.name}
-                value={d.share}
-                max={1}
-                display={`${Math.round(d.share * 100)}%`}
-                tone={d.name === 'MTN MoMo' ? 'accent' : 'good'}
-              />
-            ))}
-          </div>
+        <Panel title="Where payments went" subtitle="By the network each number was issued on.">
+          {byNetwork.length === 0 ? (
+            <p className="text-xs text-text-muted">No payment has been sent yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {byNetwork.map((row) => (
+                <Bar
+                  key={row.network}
+                  label={row.network}
+                  value={row.count}
+                  max={delivered.length}
+                  display={`${row.count} ${row.count === 1 ? 'payment' : 'payments'}`}
+                  tone={row.network === 'Unknown network' ? 'warn' : 'good'}
+                />
+              ))}
+            </div>
+          )}
         </Panel>
       </Split>
-
-      <Panel
-        title="Waiting to be batched"
-        subtitle="Licensed and owed. The amount was fixed at licensing and is not recalculated here."
-      >
-        <Table
-          columns={['Report', 'Category', 'Licensed by', 'When', 'Amount']}
-          rows={earned.map((c) => [
-            <span key="r" className="text-xs text-text-secondary">
-              {c.incidentSummary}
-            </span>,
-            <span key="c" className="text-xs text-text-muted">
-              {c.category}
-            </span>,
-            <span key="b" className="text-xs text-text-muted">
-              {c.businessName ?? '—'}
-            </span>,
-            <span key="w" className="text-xs text-text-muted">
-              {new Date(c.createdAtIso).toLocaleDateString('en-GB')}
-            </span>,
-            <span key="a" className="tabular font-medium">
-              {formatCedis(c.amountPesewas)}
-            </span>,
-          ])}
-          align={[4]}
-        />
-      </Panel>
 
       <Note>
         Every figure here is an integer number of pesewas. Rates change; a settled amount does not —

@@ -403,6 +403,16 @@ export const NEWS_TIERS: NewsTierMeta[] = [
   { id: 'brief', label: 'Brief or drop', floor: 0, placement: 'A brief, the digest, or nothing.' },
 ];
 
+/**
+ * Where a report sits when a gate has not been cleared.
+ *
+ * The bottom band rather than a separate "blocked" value, so every screen that
+ * already renders a tier keeps working and none of them has to learn a new
+ * case. What a reader of the desk sees is a report placed at the floor with its
+ * score intact beside it, which is the honest description.
+ */
+const BLOCKED_TIER: NewsTier = 'brief';
+
 export function tierFor(score: number): NewsTier {
   return (NEWS_TIERS.find((t) => score >= t.floor) ?? NEWS_TIERS[NEWS_TIERS.length - 1]!).id;
 }
@@ -444,6 +454,26 @@ export function scoreNews(
   ratings: NewsRatings,
   modifiers: NewsModifierFlags = NO_MODIFIERS,
   unassessed: NewsCriterionId[] = [],
+  /**
+   * Where the four gates stand.
+   *
+   * **The gates decide the placement, and they were not consulted.** This
+   * returned `tierFor(score)` — the tier from the number alone — so a report
+   * with three gates unanswered still came back `top_five` if it scored 300,
+   * and the desk showed it wearing a "Top five" badge directly beneath the
+   * sentence "Pass all four, or it is not a top story at all". The interface
+   * was stating a rule the model did not keep, which is worse than not stating
+   * it: an editor reads that sentence, sees the badge, and concludes the gates
+   * are advisory.
+   *
+   * The file's own first paragraph says what should happen — "an unverified,
+   * unlawful or harmful report is not a low-scoring top story, it is not a top
+   * story" — and this is where that becomes true rather than aspirational.
+   *
+   * Defaulted so existing callers keep their behaviour: with no gates supplied
+   * there is nothing to fail, and the tier is the score's.
+   */
+  gates: NewsGateAnswers | null = null,
 ): NewsScore {
   const rawTotal = NEWS_CRITERIA.reduce((sum, c) => sum + c.weight * ratings[c.id], 0);
   const baseScore = Math.round((rawTotal / MAX_RAW_TOTAL) * SCORE_SCALE);
@@ -455,7 +485,22 @@ export function scoreNews(
   const delta = applied.reduce((sum, m) => sum + m.points, 0);
   const score = Math.max(0, Math.min(SCORE_SCALE, baseScore + delta));
 
-  return { score, baseScore, rawTotal, tier: tierFor(score), applied, unassessed };
+  /*
+   * A gate is a floor, not a subtraction.
+   *
+   * The score is left exactly as it is — it measures news value, and lowering
+   * it would hide *why* the report is not running and make the number
+   * unarguable. What the gates control is placement, so an unresolved gate
+   * drops the tier to the bottom band and the score stays there in plain sight
+   * saying "this would have led, and here is what is stopping it".
+   *
+   * Unanswered counts as not passed. An editor who has not yet decided whether
+   * a report can lawfully run has not established that it can.
+   */
+  const earned = tierFor(score);
+  const tier = gates && !passesAllGates(gates) ? BLOCKED_TIER : earned;
+
+  return { score, baseScore, rawTotal, tier, applied, unassessed };
 }
 
 /** One criterion's share of the score, on the 500-point scale. */
@@ -914,7 +959,12 @@ const ACTIONABLE: IncidentCategory[] = [
  * always turn out to be about anybody's conduct in office. A single bucket
  * would have to pick one of those to be wrong about.
  */
-const ACCOUNTABILITY_STRONG: IncidentCategory[] = ['corruption', 'galamsey', 'election'];
+const ACCOUNTABILITY_STRONG: IncidentCategory[] = [
+  'corruption',
+  'whistleblower',
+  'galamsey',
+  'election',
+];
 const ACCOUNTABILITY_MODERATE: IncidentCategory[] = [
   'chieftaincy',
   'land',

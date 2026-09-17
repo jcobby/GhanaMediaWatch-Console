@@ -1,4 +1,5 @@
-import { Sidebar, UserMenu, type NavItem } from '@/components/shell';
+import { UserMenu, type NavItem } from '@/components/shell';
+import { TopBar } from '@/components/shell/TopBar';
 import { requireSession } from '@/lib/session';
 import { editorial } from '@/lib/consoleApi';
 
@@ -9,6 +10,11 @@ import { editorial } from '@/lib/consoleApi';
  * and judging whether a claim is true are different jobs held by different
  * organisations, and one account able to do both could route a report to itself
  * and publish it unchecked.
+ *
+ * **Navigation across the top, not down the side.** Two destinations do not
+ * need a 244px rail, and the desk beneath is three things side by side — the
+ * queue, the evidence and the decision — that were squeezed into what the rail
+ * left over.
  */
 export default async function EditorialLayout({ children }: { children: React.ReactNode }) {
   const user = await requireSession();
@@ -22,10 +28,17 @@ export default async function EditorialLayout({ children }: { children: React.Re
    * record. A failed read shows no badge rather than zero: zero says the desk
    * is clear, which is not something to assert on behalf of a silent backend.
    */
-  const open = await editorial
-    .queue<unknown>()
-    .then((q) => q.length)
-    .catch(() => undefined);
+  const [open, requests] = await Promise.all([
+    editorial
+      .queue<unknown>()
+      .then((q) => q.length)
+      .catch(() => undefined),
+    // Organisations waiting to hear whether their report runs.
+    editorial
+      .publicationRequests<unknown>()
+      .then((r) => r.length)
+      .catch(() => undefined),
+  ]);
 
   const items: NavItem[] = [
     {
@@ -34,22 +47,32 @@ export default async function EditorialLayout({ children }: { children: React.Re
       icon: 'verify',
       ...(open === undefined ? {} : { count: open }),
     },
+    {
+      href: '/editorial/requests',
+      label: 'Requests',
+      icon: 'send',
+      ...(requests === undefined ? {} : { count: requests }),
+    },
+    // The front page's running order: every current lead, and a way off the top.
+    { href: '/editorial/leading', label: 'Leading', icon: 'megaphone' },
     { href: '/editorial/decided', label: 'Decided', icon: 'history' },
   ];
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar
+    <div className="flex h-screen flex-col overflow-hidden">
+      <TopBar
         items={items}
         brand={
-          <div>
-            <p className="text-2xs font-semibold uppercase tracking-[0.16em] text-accent">Dawuro</p>
-            <p className="mt-0.5 text-sm font-medium">Verification Desk</p>
-          </div>
+          <p className="flex items-baseline gap-2">
+            <span className="text-2xs font-semibold uppercase tracking-[0.16em] text-accent">
+              Dawuro
+            </span>
+            <span className="text-sm font-medium">Verification Desk</span>
+          </p>
         }
-        footer={<UserMenu user={user} />}
+        right={<UserMenu user={user} />}
       />
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
     </div>
   );
 }

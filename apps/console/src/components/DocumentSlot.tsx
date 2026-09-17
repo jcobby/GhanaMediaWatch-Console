@@ -36,7 +36,11 @@ export function DocumentSlot({
   /** Something else in the same group already covers this. */
   satisfiedByAlternative?: boolean;
   onUpload: (file: File) => void;
-  onRemove: () => void;
+  /**
+   * Remove the attachment. Omitted where nothing can be removed — the service
+   * has no endpoint for it — and the slot offers to replace the file instead.
+   */
+  onRemove?: () => void;
   /** An upload in flight for this slot. */
   busy?: boolean;
   /** Why the last attempt failed, shown on the slot that failed. */
@@ -88,7 +92,7 @@ export function DocumentSlot({
         )}
       </div>
 
-      {done ? (
+      {done && onRemove ? (
         <button
           type="button"
           onClick={onRemove}
@@ -106,7 +110,7 @@ export function DocumentSlot({
               : 'cursor-pointer hover:border-accent/30 hover:text-accent',
           )}
         >
-          {busy ? 'Uploading' : 'Upload'}
+          {busy ? 'Uploading' : done ? 'Replace' : 'Upload'}
           <input
             type="file"
             className="sr-only"

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { ApiUnavailable } from '@/lib/apiError';
 import { requireSession } from '@/lib/session';
 import {
   COUNT_RANGE,
@@ -17,18 +18,25 @@ import {
  * decision rather than a constant compiled into an app nobody can change
  * without a release.
  *
- * **It writes to the console's own store, not to the service.** No endpoint
- * carries a platform setting of any kind — checked against the published
- * OpenAPI document — so what is saved here is durable and is not yet
- * distributed: phones run on their own defaults until the backend serves it.
- * That is stated on the page where the control is, rather than left for an
- * operator to discover.
+ * **Saved to the service.** `PUT /platform/settings` stores it and `GET /settings`
+ * serves it to every phone within five minutes. It used to write to a file in
+ * this console, because no endpoint carried a platform setting — so nothing the
+ * desk saved ever reached a reader.
  */
 
 const schema = z.object({
   count: z.number().int().min(COUNT_RANGE.min).max(COUNT_RANGE.max),
   dwellSeconds: z.number().int().min(DWELL_SECONDS_RANGE.min).max(DWELL_SECONDS_RANGE.max),
 });
+
+/** The service's own sentence and status, so an operator sees what refused it. */
+function failed(cause: unknown, fallback: string) {
+  const failure = cause instanceof ApiUnavailable ? cause : null;
+  return NextResponse.json(
+    { error: failure?.message ?? fallback, upstreamStatus: failure?.status ?? 0 },
+    { status: failure && failure.status >= 400 ? failure.status : 502 },
+  );
+}
 
 export async function GET() {
   const session = await requireSession();
@@ -38,7 +46,11 @@ export async function GET() {
       { status: 403 },
     );
   }
-  return NextResponse.json(await readTopStories());
+  try {
+    return NextResponse.json(await readTopStories());
+  } catch (cause) {
+    return failed(cause, 'The service did not answer.');
+  }
 }
 
 export async function PUT(request: Request) {
@@ -49,6 +61,12 @@ export async function PUT(request: Request) {
     return NextResponse.json(
       { error: 'This account cannot change platform settings.' },
       { status: 403 },
+    );
+  }
+  if (!session.accessToken) {
+    return NextResponse.json(
+      { error: 'This session carries no backend credential. Sign in again.' },
+      { status: 401 },
     );
   }
 
@@ -75,13 +93,16 @@ export async function PUT(request: Request) {
     );
   }
 
-  const saved = await writeTopStories({
-    count: parsed.data.count,
-    dwellSeconds: parsed.data.dwellSeconds,
-    // Who changed it, so a rotation nobody remembers setting has a name on it.
-    byEmail: session.email,
-    atIso: new Date().toISOString(),
-  });
-
-  return NextResponse.json(saved);
+  try {
+    const saved = await writeTopStories({
+      count: parsed.data.count,
+      dwellSeconds: parsed.data.dwellSeconds,
+      byEmail: session.email,
+      atIso: new Date().toISOString(),
+      token: session.accessToken,
+    });
+    return NextResponse.json(saved);
+  } catch (cause) {
+    return failed(cause, 'The setting could not be saved.');
+  }
 }

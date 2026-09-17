@@ -202,6 +202,13 @@ const ENTRIES: Entry[] = [
     section: null,
   },
   {
+    label: 'Commission offers',
+    href: '/commissions',
+    icon: 'banknote',
+    needs: 'view_earnings',
+    section: null,
+  },
+  {
     label: 'Support',
     href: '/support',
     icon: 'lifebuoy',
@@ -272,11 +279,21 @@ const ORGANISATION_BASE: {
   label: string;
   href: string;
   icon: NavSection['items'][number]['icon'];
+  /**
+   * Hidden from a role that lacks this — but only when there is a role at all.
+   *
+   * An entry with no `needs` is part of the shell for everybody inside the
+   * organisation: `/published` is already-public material, and `/account` shows
+   * the organisation its own plan and spend. Neither is another person's work.
+   */
+  needs?: ConsoleCapability;
 }[] = [
-  { label: 'Inbox', href: '/inbox', icon: 'inbox' },
-  { label: 'Map & trends', href: '/map', icon: 'map' },
+  { label: 'Inbox', href: '/inbox', icon: 'inbox', needs: 'view_inbox' },
+  // The map plots `org.inbox`. Same reports, same capability — see the page.
+  { label: 'Map & trends', href: '/map', icon: 'map', needs: 'view_inbox' },
   { label: 'Published', href: '/published', icon: 'megaphone' },
-  { label: 'Team', href: '/team', icon: 'users' },
+  // Issues invites, so it decides who else may read citizens' footage.
+  { label: 'Team', href: '/team', icon: 'users', needs: 'manage_staff' },
   { label: 'Account', href: '/account', icon: 'building2' },
 ];
 
@@ -287,6 +304,7 @@ const ORGANISATION_BY_CAPABILITY = new Set([
   '/affiliations',
   '/agent',
   '/earnings',
+  '/commissions',
   '/support',
   '/invoices',
 ]);
@@ -332,8 +350,28 @@ export function organisationNavigation({
     ];
   }
 
-  const items = ORGANISATION_BASE.map((item) =>
-    item.href === '/inbox' && inboxCount ? { ...item, count: inboxCount } : item,
+  /*
+   * The base list, minus anything this role may not do.
+   *
+   * `role ? … : true` is the whole subtlety, and it is why this cannot simply
+   * mirror `navigationFor`. An organisation login may carry no role — the seeded
+   * institution accounts have a `businessId` and nothing else — and
+   * `roleCan(undefined, …)` is false for everything, so filtering such an
+   * account against capabilities would empty its sidebar entirely. A role
+   * *present and lacking* the capability is a real answer; a role *absent* is
+   * not an answer at all, and must not be read as a denial.
+   *
+   * The pages enforce the same rule in the same shape. Before this, the base
+   * five were offered to every role unconditionally while only some of them
+   * checked anything on arrival — so the menu was advertising `/inbox` to an
+   * Agent, who does not hold `view_inbox`, and the page then served it.
+   */
+  const items = ORGANISATION_BASE.filter(
+    (item) => !item.needs || !role || roleCan(role, item.needs),
+  ).map(({ label, href, icon }) =>
+    href === '/inbox' && inboxCount
+      ? { label, href, icon, count: inboxCount }
+      : { label, href, icon },
   );
 
   if (role) {

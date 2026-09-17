@@ -20,9 +20,8 @@ import {
   StatGrid,
   Table,
 } from '@/components/admin/Widgets';
-import { RowAction, RowActions } from '@/components/admin/RowAction';
 import { requireSession } from '@/lib/session';
-import { NotWired, Outage, load } from '@/components/ui';
+import { Outage, load } from '@/components/ui';
 import { platform } from '@/lib/consoleApi';
 
 const PROBLEM_LABEL: Record<string, string> = {
@@ -58,7 +57,6 @@ export default async function Page() {
           title="Institutions"
           blurb="Every organisation on the platform, and where its application stands."
         />
-        <NotWired what="Approving an institution" />
         <Outage error={result.error} retryHref="/admin/institutions" />
       </PageShell>
     );
@@ -155,19 +153,22 @@ export default async function Page() {
                   {PROBLEM_LABEL[problem] ?? problem}
                 </span>
               ),
-              <RowActions key="a">
-                {a.screeningRunAtIso === null ? (
-                  <RowAction label="Run screening" done="Screening run" />
-                ) : null}
-                <RowAction
-                  label="Approve"
-                  done="Approved"
-                  tone="primary"
-                  confirm="Grant access to public footage?"
-                  disabled={problem !== null}
-                  disabledReason={problem ? (PROBLEM_LABEL[problem] ?? problem) : undefined}
-                />
-              </RowActions>,
+              /*
+                No decision controls here, deliberately.
+
+                These were simulated buttons — "Approve" settled into a tick
+                after a timer and granted nothing — sitting on the page that
+                *reads* like the place approvals happen. The real thing is on
+                `/platform/approvals`, which reviews step by step, gates approval
+                on screening, and sends every decision to the service. Wiring a
+                second set here would mean two ways to grant access to citizens'
+                footage, and the weaker one would be the more prominent.
+
+                The row still opens the application; the verdict is one click on.
+              */
+              <span key="a" className="text-2xs text-text-muted">
+                {problem === null ? 'Ready to review' : (PROBLEM_LABEL[problem] ?? problem)}
+              </span>,
             ];
           })}
           align={[2, 5]}

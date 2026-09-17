@@ -66,7 +66,17 @@ export interface CallerDescription {
   orgId?: string | null;
   /** Their job inside it — owner, admin, analyst, dispatcher, viewer. */
   role?: string | null;
-  memberships?: { orgId?: string; orgName?: string; role?: string }[];
+  /*
+   * `name` is what the live service sends; `orgName` is read too for an older
+   * build. `verified` is false while the organisation awaits platform approval.
+   */
+  memberships?: {
+    orgId?: string;
+    orgName?: string;
+    name?: string;
+    role?: string;
+    verified?: boolean;
+  }[];
 }
 
 interface TokenEnvelope {
@@ -121,7 +131,16 @@ export async function authenticate(input: Credentials): Promise<AuthResult> {
       email,
       displayName: me?.displayName?.trim() || email.split('@')[0] || email,
       accountType: accountTypeFrom(me, tokens.accessToken),
-      onboardingComplete: true,
+      /*
+       * Incomplete while the organisation is pending approval.
+       *
+       * The service refuses every `/org/*` route but onboarding for a pending
+       * organisation (`check: "org_pending"`), so opening the inbox would be a
+       * console of refusals. `verified: false` on the membership is how `/me`
+       * says it; anything else — including a server that omits the field — is
+       * treated as complete, which is how every existing organisation signed in.
+       */
+      onboardingComplete: membership?.verified !== false,
       accessToken: tokens.accessToken,
       /*
        * The organisation, straight from the server.
@@ -148,15 +167,25 @@ export async function authenticate(input: Credentials): Promise<AuthResult> {
  * null for every account tested, and an empty console for a genuine member
  * would look exactly like the bug this replaces.
  */
-function primaryMembership(me: CallerDescription): { orgId: string; orgName?: string } | null {
+function primaryMembership(
+  me: CallerDescription,
+): { orgId: string; orgName?: string; verified?: boolean } | null {
+  const describe = (orgId: string, entry: NonNullable<CallerDescription['memberships']>[number] | undefined) => {
+    const orgName = entry?.orgName ?? entry?.name;
+    return {
+      orgId,
+      ...(orgName ? { orgName } : {}),
+      ...(typeof entry?.verified === 'boolean' ? { verified: entry.verified } : {}),
+    };
+  };
+
   if (me.orgId) {
-    const named = me.memberships?.find((m) => m.orgId === me.orgId);
-    return { orgId: me.orgId, ...(named?.orgName ? { orgName: named.orgName } : {}) };
+    return describe(me.orgId, me.memberships?.find((m) => m.orgId === me.orgId));
   }
 
   const first = me.memberships?.find((m) => m.orgId);
   if (!first?.orgId) return null;
-  return { orgId: first.orgId, ...(first.orgName ? { orgName: first.orgName } : {}) };
+  return describe(first.orgId, first);
 }
 
 /**

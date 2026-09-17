@@ -2,210 +2,278 @@ import fs from 'fs';
 import path from 'path';
 
 /**
- * Registering an organisation.
+ * An organisation applies, and the application lives on the service.
  *
- * The route used to be a simulation — it invented a `businessId`, wrote a
- * session with **no backend credential**, and returned a redirect. The
- * applicant was signed in, sent to `/onboarding`, and the first thing that page
- * did was ask the API a question with nothing to ask it with. What they saw was
- * "Signed out. Your session ended." on a page they had never been signed in to.
+ * The flow, in the product owner's words: the organisation registers, fills in
+ * the onboarding forms, and the Dawuro owner approves or rejects it.
  *
- * Nothing about that was catchable by a typecheck: the session was structurally
- * valid, the redirect was correct, and the failure happened one navigation
- * later in a different file.
+ * Until the backend's fourth round, `POST /auth/register` could only make a
+ * reporter and every `/org/*` route needed an organisation that already
+ * existed. So the console kept applications and their documents in files on its
+ * own disk — invisible to the service, lost on redeploy, and visible to the
+ * platform owner only on the same machine. Registration now creates a pending
+ * organisation, and these pin that nothing is kept locally any more.
  *
- * Asserted against the source because the route needs a live backend and a
- * cookie store, and what matters is that the calls are on the path at all.
+ * Asserted against the source because the routes need a live backend and a
+ * cookie store, and what matters is which calls are on the path.
  */
 
 const SRC = path.resolve(__dirname, '..');
 const read = (rel: string) => fs.readFileSync(path.join(SRC, rel), 'utf8');
 
-const registerRoute = () => read('app/api/auth/register/route.ts');
+/** Comments stripped, so a rule cannot pass by matching the note explaining it. */
+const code = (rel: string) =>
+  read(rel)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 
-test('registration creates a real account on the backend', () => {
-  const src = registerRoute();
-  expect(src).toMatch(/apiRequest<[^>]*>\('\/auth\/register'/);
-  expect(src).toMatch(/method: 'POST'/);
+const REGISTER = 'app/api/auth/register/route.ts';
+const ONBOARDING = 'app/api/onboarding/route.ts';
+const WIZARD = 'app/(organisation)/onboarding/OnboardingWizard.tsx';
+const PAGE = 'app/(organisation)/onboarding/page.tsx';
+
+function sourceFiles(dir: string): string[] {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return entry.name === '__tests__' ? [] : sourceFiles(full);
+    return /\.(ts|tsx)$/.test(entry.name) ? [full] : [];
+  });
+}
+
+// ─── registration ─────────────────────────────────────────────────────────
+
+test('registration creates the organisation, not a reporter', () => {
+  const src = code(REGISTER);
+  expect(src).toMatch(/apiRequest<TokenEnvelope>\('\/auth\/register'/);
+  expect(src).toMatch(/accountKind: 'organisation'/);
+  expect(src).toMatch(/organisation: \{ name: input\.organisationName, sector: input\.sector \}/);
 });
 
-test('the session carries the token the backend issued', () => {
-  /*
-   * The whole bug. Without this the session is a shell: every page behind it
-   * fails on its first request, and the copy for that failure is "your session
-   * ended" — which is both wrong and unactionable.
-   */
-  const src = registerRoute();
+test('the session is the organisation the service made, with onboarding still to do', () => {
+  const src = code(REGISTER);
   const sessionWrite = src.slice(src.indexOf('await createSession('));
   expect(sessionWrite).toMatch(/accessToken: tokens\.accessToken/);
-});
-
-test('nothing invents an organisation id', () => {
-  /*
-   * `biz_new_${Date.now()}` was a locally-minted id for an organisation the
-   * server had never heard of. Every subsequent call scoped to it would have
-   * been asking about something that does not exist.
-   */
-  expect(registerRoute()).not.toMatch(/biz_new_/);
-  expect(registerRoute()).not.toMatch(/Simulated/i);
-});
-
-test('a password is required, and long enough for the server', () => {
-  /*
-   * Registration collected none, so an applicant whose session expired had no
-   * credential that could recreate it — they were locked out of their own
-   * application permanently.
-   */
-  expect(registerRoute()).toMatch(/password: z\.string\(\)\.min\(8/);
-  expect(read('app/register/company/RegisterForm.tsx')).toMatch(/type="password"/);
-});
-
-test('the form sends the password it collected', () => {
-  // A field on screen that never reaches the request is worse than no field.
-  const form = read('app/register/company/RegisterForm.tsx');
-  const submit = form.slice(form.indexOf("fetch('/api/auth/register'"));
-  expect(submit).toMatch(/password,/);
-});
-
-test('the form will not submit without a usable password', () => {
-  const form = read('app/register/company/RegisterForm.tsx');
-  expect(form).toMatch(/password\.length < 8/);
-});
-
-test('an account that already exists says so, rather than failing vaguely', () => {
-  /*
-   * The most likely second attempt: somebody registers, loses the session, and
-   * tries again. "Something went wrong" would send them to support; "sign in
-   * instead" solves it.
-   */
-  const src = registerRoute();
-  expect(src).toMatch(/status === 409/);
-  expect(src).toMatch(/Sign in instead/);
-});
-
-test('an outage is not reported as a rejected registration', () => {
-  // Telling somebody their details were refused when the service was simply
-  // unreachable sends them to change details that were never wrong.
-  expect(registerRoute()).toMatch(/could not be reached, so nothing was registered/);
-});
-
-test('the applicant is not classed as an organisation the server has never heard of', () => {
-  /*
-   * Claiming `organisation` would drop them into a console whose every page the
-   * server refuses — which is the screen this whole change exists to remove.
-   */
-  const src = registerRoute();
-  const sessionWrite = src.slice(src.indexOf('await createSession('));
-  expect(sessionWrite).toMatch(/accountType: 'reporter'/);
+  expect(sessionWrite).toMatch(/businessId: orgId/);
+  expect(sessionWrite).toMatch(/accountType: 'organisation'/);
   expect(sessionWrite).toMatch(/onboardingComplete: false/);
 });
 
-test('an applicant reaches onboarding rather than the reporter dead end', () => {
-  /*
-   * They are a reporter account by the server's reckoning, and reporters are
-   * sent to `/no-console` — "Reporting happens on the phone." Somebody who
-   * filled in an organisation's details a moment ago being told that reads as
-   * the registration having been thrown away.
-   */
-  const middleware = read('middleware.ts');
-  expect(middleware).toMatch(/hasApplication\(session\)/);
-  expect(middleware).toMatch(/'\/onboarding'/);
+test('nothing invents an organisation id', () => {
+  const src = code(REGISTER);
+  expect(src).not.toMatch(/biz_new_|held_/);
+  expect(src).toMatch(/tokens\.me\?\.orgId/);
 });
 
-test('signing in and middleware agree on where an applicant belongs', () => {
+test('what registration collected is written to the application, not dropped', () => {
   /*
-   * The bug this missed. The two answers were computed separately: middleware
-   * had its own `applicantHome`, while the login route called `homeFor`, which
-   * knows only the account type — so it returned `/no-console` for an applicant
-   * who had registered, onboarded and been approved.
+   * Interests decide routing; `/auth/register` has no field for them. They go
+   * onto the organisation step, and the wizard merges rather than replaces it.
+   */
+  const src = code(REGISTER);
+  expect(src).toMatch(/'\/org\/onboarding\/steps\/organisation'/);
+  expect(src).toMatch(/interests: input\.interests/);
+  expect(code(WIZARD)).toMatch(/\.\.\.\(payloads\[id\] \?\? \{\}\)/);
+});
+
+test('a password is required, and long enough for the server', () => {
+  expect(code(REGISTER)).toMatch(/password: z\.string\(\)\.min\(8/);
+  const form = read('app/register/company/RegisterForm.tsx');
+  expect(form).toMatch(/type="password"/);
+  expect(form).toMatch(/password\.length < 8/);
+  expect(form.slice(form.indexOf("fetch('/api/auth/register'"))).toMatch(/password,/);
+});
+
+test('an account that already exists says so, and an outage is not a refusal', () => {
+  const src = code(REGISTER);
+  expect(src).toMatch(/status === 409/);
+  expect(src).toMatch(/Sign in instead/);
+  expect(src).toMatch(/could not be reached, so nothing was registered/);
+});
+
+// ─── nothing kept on this machine ─────────────────────────────────────────
+
+test('the console keeps no applications or documents of its own', () => {
+  expect(fs.existsSync(path.join(SRC, 'lib/applications.ts'))).toBe(false);
+  expect(fs.existsSync(path.join(SRC, 'app/api/onboarding/documents'))).toBe(false);
+
+  const offenders = sourceFiles(SRC).filter((file) =>
+    // `.data` itself is not the test: dev captures and the place-name cache use it.
+    /lib\/applications'|applications\.json|documentsRoot|DAWURO_APPLICATIONS_FILE/.test(
+      fs.readFileSync(file, 'utf8'),
+    ),
+  );
+  expect(offenders.map((file) => path.relative(SRC, file))).toEqual([]);
+});
+
+// ─── signing in ───────────────────────────────────────────────────────────
+
+test('a pending organisation signs in to onboarding, an approved one to its console', () => {
+  const auth = code('lib/auth.ts');
+  expect(auth).toMatch(/onboardingComplete: membership\?\.verified !== false/);
+  expect(auth).toMatch(/businessId: membership\.orgId/);
+  // `name` is what the live service sends on a membership.
+  expect(auth).toMatch(/entry\?\.orgName \?\? entry\?\.name/);
+
+  const login = code('app/api/auth/login/route.ts');
+  expect(login).not.toMatch(/applicationFor/);
+  expect(login).toMatch(/redirectTo: homeForSession\(user\)/);
+
+  const middleware = read('middleware.ts');
+  expect(middleware).toMatch(/homeForSession\(session\)/);
+  expect(middleware).toMatch(/session\.onboardingComplete === false/);
+});
+
+// ─── the wizard ───────────────────────────────────────────────────────────
+
+test('onboarding writes to the service under the session organisation', () => {
+  const route = code(ONBOARDING);
+  expect(route).toMatch(/org\.saveOnboardingStep\(/);
+  expect(route).toMatch(/org\.submitOnboardingStep\(/);
+  expect(route).toMatch(/org\.attachOnboardingDocument/);
+  expect(route).toMatch(/org\.submitOnboarding\(\)/);
+  // Scoped by the session, never by anything the browser sends.
+  expect(route).toMatch(/if \(!session\.businessId\)/);
+  expect(route).not.toMatch(/orgId: z\./);
+
+  const api = code('lib/consoleApi.ts');
+  expect(api).toMatch(/`\/org\/onboarding\/steps\/\$\{encodeURIComponent\(stepId\)\}`, 'PUT'/);
+});
+
+test('a step is only marked sent once the service has it', () => {
+  const wizard = code(WIZARD);
+  const send = wizard.slice(wizard.indexOf('const send = async'), wizard.indexOf('const upload ='));
+  expect(send).toContain("await call({ action: 'send'");
+  expect(send.indexOf('await call(')).toBeLessThan(send.indexOf('setCurrent('));
+  expect(send).toMatch(/if \(!view\) return;/);
+});
+
+test('a document is fingerprinted from its bytes', () => {
+  const wizard = code(WIZARD);
+  expect(wizard).toMatch(/crypto\.subtle\.digest\('SHA-256', await file\.arrayBuffer\(\)\)/);
+  expect(wizard).toMatch(/action: 'document'/);
+  expect(read('components/DocumentSlot.tsx')).toMatch(/if \(file\) onUpload\(file\)/);
+});
+
+test('the bytes of a document actually leave the browser', () => {
+  /*
+   * The whole point of the document step, and for a long time the one thing it
+   * did not do. The service had nowhere to put a file, so this recorded a name
+   * and a SHA-256 and the certificate stayed on the applicant's computer — a
+   * platform owner approved an organisation's access to citizens' footage on the
+   * strength of a filename. The upload endpoint landed on 16 September.
    *
-   * Middleware could not correct it, because `/no-console` is a public path and
-   * returns before the applicant rules run. One function now answers for both.
+   * Declared first, then sent: the service checks the bytes against the hash
+   * that declared them, so the order is load-bearing.
    */
-  const token = read('lib/token.ts');
-  expect(token).toMatch(/export function homeForSession/);
-  const fn = token.slice(token.indexOf('export function homeForSession'));
-  expect(fn.slice(0, fn.indexOf('}'))).toMatch(/hasApplication\(user\).*'\/onboarding'/s);
+  const wizard = code(WIZARD);
+  expect(wizard).toMatch(/const declared = await call\(/);
+  expect(wizard).toMatch(/if \(!declared\) return;/);
+  expect(wizard).toMatch(/method: 'PUT',\s*headers: \{ 'Content-Type': file\.type/);
+  expect(wizard).toMatch(/body: file,/);
 
-  expect(read('app/api/auth/login/route.ts')).toMatch(/redirectTo: homeForSession\(user\)/);
-  expect(read('middleware.ts')).toMatch(/homeForSession\(session\)/);
+  // And a declare that never uploaded is a failure, not a tick.
+  expect(wizard).toMatch(/The file did not upload/);
+
+  const route = code(ONBOARDING);
+  expect(route).toMatch(/export async function PUT/);
+  expect(route).toMatch(/org\.uploadOnboardingDocumentBytes\(documentType, bytes, mimeType\)/);
+  // Scoped by the session, exactly as the POST handler is.
+  const put = route.slice(route.indexOf('export async function PUT'));
+  expect(put).toMatch(/if \(!session\.businessId\)/);
+
+  const api = read('lib/consoleApi.ts');
+  expect(api).toMatch(/\/bytes`/);
+  expect(api).toMatch(/rawBody: bytes/);
 });
 
-test('an applicant is never left on the reporter page', () => {
+test('the console still keeps no document of its own on disk', () => {
   /*
-   * `/no-console` is public, so middleware returns before the applicant rules.
-   * That is precisely how somebody approved by an operator ended up staring at
-   * "Reporting happens on the phone" after signing in.
+   * Proxying the bytes is not storing them. The forbidden path stays forbidden:
+   * the upload is a PUT on `/api/onboarding`, and nothing is written anywhere.
    */
-  const middleware = read('middleware.ts');
-  const publicBranch = middleware.slice(middleware.indexOf('if (matches(pathname, PUBLIC_PATHS))'));
-  const branch = publicBranch.slice(0, publicBranch.indexOf('if (!session)'));
-  expect(branch).toMatch(/pathname === '\/no-console'/);
-  expect(branch).toMatch(/hasApplication\(session\)/);
-  expect(branch).toMatch(/'\/onboarding'/);
+  expect(fs.existsSync(path.join(SRC, 'app/api/onboarding/documents'))).toBe(false);
+  const route = code(ONBOARDING);
+  expect(route).not.toMatch(/writeFile|createWriteStream/);
 });
 
-test('the applicant check runs before the reporter redirect', () => {
-  // Reversed, the reporter rule fires first and the applicant never reaches
-  // onboarding at all.
-  const middleware = read('middleware.ts');
-  const applicantRule = middleware.indexOf('if (hasApplication(session)) {');
-  const reporterRule = middleware.indexOf("if (session.accountType === 'reporter')");
-  // Both present, then ordered: `indexOf` answers -1 for a rule that has been
-  // deleted, and -1 is less than every real position.
-  expect(applicantRule).toBeGreaterThan(-1);
-  expect(reporterRule).toBeGreaterThan(-1);
-  expect(applicantRule).toBeLessThan(reporterRule);
-});
-
-test('onboarding tells an applicant the truth instead of showing an outage', () => {
-  /*
-   * `/org/onboarding` answers 403 for somebody with no organisation. That is
-   * the expected reply, not a fault, and rendering it as an outage would say
-   * the service is down while it works exactly as built.
-   */
-  const page = read('app/(organisation)/onboarding/page.tsx');
-  expect(page).toMatch(/status === 403/);
-  /*
-   * Asserted on the behaviour, not on a sentence.
-   *
-   * This pinned the exact phrase "is not registered yet", so rewriting the copy
-   * for the applicant — which was the point of the rewrite — broke a test about
-   * error handling. What matters is that a 403 renders an explanation and
-   * offers a way forward, not which words it uses.
-   */
-  /*
-   * What the 403 means changed. It says "this is an application the console is
-   * holding", and such an applicant belongs in the wizard — not on a page
-   * explaining why they cannot proceed.
-   */
-  expect(page).toMatch(/await applicationFor\(session\.email\)/);
+test('the page reads the service application and normalises it', () => {
+  const page = code(PAGE);
+  expect(page).toMatch(/org\.onboarding<unknown>\(\)/);
+  expect(page).toMatch(/normaliseOnboarding\(result\.data/);
   expect(page).toMatch(/<OnboardingWizard/);
+  // No organisation at all is a statement, not an outage.
+  expect(page).toMatch(/refused && !session\.businessId/);
+  // Approved: the session predates it, so they are told to sign in again.
+  expect(page).toMatch(/application\.approvedAtIso/);
+  expect(page).toMatch(/<SignInAgain \/>/);
 });
 
-test('onboarding stores the documents it collects', () => {
+// ─── the platform owner's side ────────────────────────────────────────────
+
+test('review decisions reach the service', () => {
+  const route = code('app/api/platform/applications/[id]/route.ts');
+  expect(route).toMatch(/platform\.approve\(id\)/);
+  expect(route).toMatch(/platform\.screen\(id\)/);
+  expect(route).toMatch(/platform\.decideStep\(id, input\.stepId/);
+  expect(route).toMatch(/accountType !== 'platform_owner'/);
+  expect(route).toMatch(/note: z\.string\(\)\.trim\(\)\.min\(1/);
+
+  const review = code('components/ApplicationReview.tsx');
+  expect(review).toMatch(/fetch\(`\/api\/platform\/applications\/\$\{encodeURIComponent\(application\.id\)\}`/);
+  // Screening is never marked clear in the browser.
+  expect(review).not.toMatch(/screeningClear: true/);
+});
+
+test('a whole application can be declined, with a reason', () => {
   /*
-   * Inverted, because the reason changed rather than went away.
-   *
-   * The wizard asks for a certificate of incorporation and a director's
-   * identity document, and collecting those into a form with nowhere to send
-   * them is worse than not asking — which is exactly what it did:
-   * `onUpload(file.name)` kept the name and dropped the bytes, so a reviewer
-   * would have been approving a filename. There is somewhere to send them now,
-   * so the rule is that they actually go there.
+   * There was no endpoint for this until 16 September, so the console answered
+   * its own Decline button with a 501 telling the reviewer to send the offending
+   * step back instead. The reason is required either way: an applicant told only
+   * "declined" reapplies with the same problem, and the service shows it to them
+   * on `GET /org/onboarding`.
    */
-  const slot = read('components/DocumentSlot.tsx');
-  expect(slot).toMatch(/onUpload: \(file: File\) => void/);
+  const route = code('app/api/platform/applications/[id]/route.ts');
+  expect(route).toMatch(/platform\.reject\(id, input\.note\)/);
+  expect(route).not.toMatch(/status: 501/);
 
-  const wizard = read('app/(organisation)/onboarding/OnboardingWizard.tsx');
-  expect(wizard).toMatch(/'\/api\/onboarding\/documents'/);
-  expect(wizard).toMatch(/form\.append\('file', file\)/);
+  const api = read('lib/consoleApi.ts');
+  expect(api).toMatch(/\/reject`/);
+  // The console says `note`, the service says `reason`.
+  expect(api).toMatch(/\{ reason \}/);
+  // Keyed, so a double-click declines once.
+  expect(api).toMatch(/`reject:\$\{id\}`/);
+
+  const review = code('components/ApplicationReview.tsx');
+  expect(review).toMatch(/decision: 'rejected'/);
+  expect(review).toMatch(/Decline application/);
 });
 
-test('the wizard still renders for an organisation that really exists', () => {
-  // The opposite failure: refusing everyone would break the real flow the
-  // moment the backend can create an organisation.
-  const page = read('app/(organisation)/onboarding/page.tsx');
-  expect(page).toMatch(/org\.onboarding<OnboardingApplication>\(\)/);
-  expect(page).toMatch(/<OnboardingWizard/);
+test('a reviewer can open the document, not just read its name', () => {
+  /*
+   * The whole point of the document step. Approving an organisation on the
+   * strength of a filename is what this prevents, and it is what the screen did
+   * for as long as the service kept no bytes.
+   */
+  const review = code('components/ApplicationReview.tsx');
+  expect(review).toMatch(
+    /href=\{`\/api\/platform\/applications\/\$\{encodeURIComponent\(applicationId\)\}\/documents\/\$\{encodeURIComponent\(d\.id\)\}`\}/,
+  );
+
+  const route = code('app/api/platform/applications/[id]/documents/[documentType]/route.ts');
+  // Identity documents: a platform owner, or a 404 that admits nothing.
+  expect(route).toMatch(/session\.accountType !== 'platform_owner'/);
+  expect(route).toMatch(/Not found\./);
+  // Streamed, and never held by a shared cache.
+  expect(route).toMatch(/new NextResponse\(upstream\.body/);
+  expect(route).toMatch(/'Cache-Control': 'private, no-store'/);
+  // The token is attached here, which is the only place it exists.
+  expect(route).toMatch(/Authorization: `Bearer \$\{session\.accessToken\}`/);
+});
+
+test('the approvals queue is the service queue alone, normalised', () => {
+  const page = code('app/(platform)/platform/approvals/page.tsx');
+  expect(page).toMatch(/platform\.applications</);
+  expect(page).toMatch(/normaliseOnboarding\(row\)/);
+  expect(page).not.toMatch(/HeldApplications|DecidedApplications/);
 });

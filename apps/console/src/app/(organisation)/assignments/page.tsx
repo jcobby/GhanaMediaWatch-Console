@@ -22,6 +22,8 @@ import { OrganisationOutage } from '@/components/OrganisationOutage';
 import { requireSession } from '@/lib/session';
 import { load } from '@/components/ui';
 import { org } from '@/lib/consoleApi';
+import { normaliseAssignments } from '@/lib/assignments';
+import { AssignmentsBoard } from './AssignmentsBoard';
 
 const ORDER: ResponseAction[] = [
   'acknowledged',
@@ -47,7 +49,20 @@ export default async function Page() {
    * The clock is computed by the shared `slaState` — the same rule the platform
    * SLA sweep uses — from the report's real timestamps and the real time now.
    */
-  const result = await load(() => org.inbox<AssignedReport>());
+  const result = await load(async () => {
+    const [inbox, dispatch] = await Promise.all([
+      org.inbox<AssignedReport>(),
+      /*
+       * Soft: a dispatch list that cannot be read says so in its own panel, and
+       * does not take the SLA queue with it.
+       */
+      org
+        .assignments<unknown>()
+        .then(normaliseAssignments)
+        .catch(() => null),
+    ]);
+    return Object.assign(inbox, { dispatch });
+  });
   if (!result.ok) {
     return (
       <PageShell>
@@ -87,6 +102,8 @@ export default async function Page() {
     ];
   });
 
+  const dispatch = result.data.dispatch;
+  const openDispatch = dispatch?.filter((a) => a.status !== 'closed').length ?? null;
   const unacknowledged = rows.filter((r) => r.ack === null);
   const breaching = rows.filter((r) => r.sla.status === 'breached' && r.ack === null);
 
@@ -109,8 +126,25 @@ export default async function Page() {
           value={String(breaching.length)}
           tone={breaching.length ? 'bad' : 'good'}
         />
-        <Stat label="Open" value={String(rows.length)} hint="Assignments currently on your desk" />
+        <Stat
+          label="Staff dispatched"
+          value={openDispatch === null ? '—' : String(openDispatch)}
+          hint="Assignments not yet closed"
+        />
       </StatGrid>
+
+      <Panel
+        title="Dispatch"
+        subtitle="Who has been sent to which report, and how far they have got."
+      >
+        {dispatch ? (
+          <AssignmentsBoard assignments={dispatch} />
+        ) : (
+          <p className="text-xs text-text-muted">
+            The dispatch list could not be read just now. The queue below is unaffected.
+          </p>
+        )}
+      </Panel>
 
       <Panel
         title="Your queue"

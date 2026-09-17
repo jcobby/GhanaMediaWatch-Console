@@ -1,112 +1,172 @@
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
-import {
-  SUBSCRIPTION_PLANS,
-  downloadCharge,
-  formatCedis,
-  isUnlimited,
-  periodCost,
-  type OrganisationAccount,
-} from '@dawuro/core';
+import type { Route } from 'next';
+import { ArrowLeft, Check, Clock } from 'lucide-react';
+import { formatCedis, type OrganisationAccount } from '@dawuro/core';
 import { Note, PageShell, Panel } from '@/components/admin/Widgets';
 import { OrganisationOutage } from '@/components/OrganisationOutage';
 import { requireSession } from '@/lib/session';
-import { NotWired, load } from '@/components/ui';
+import { load } from '@/components/ui';
 import { org } from '@/lib/consoleApi';
+import { INVOICE_STATUS_COPY, normaliseInvoice } from '@/lib/invoices';
 import { CheckoutPanel } from './CheckoutPanel';
 
 export const metadata = { title: 'Checkout — Dawuro' };
 
 /**
- * Paying an invoice.
+ * Paying one invoice.
  *
- * The summary sits beside the payment panel rather than on a screen before it,
- * because the single most common checkout mistake is paying the wrong amount
- * without ever seeing what it was for.
+ * The invoice is read from the service, so the amount on the button is the
+ * amount the service will charge — not a figure this page worked out from the
+ * plan table. Payment happens on PayDirect's page; when it sends the payer back
+ * here, the invoice is read again and its status is the answer.
+ *
+ * The summary sits beside the payment panel, because the most common checkout
+ * mistake is paying without ever seeing what it was for.
  */
-export default async function Page() {
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ invoice?: string; returned?: string }>;
+}) {
   await requireSession();
+  const { invoice: invoiceId, returned } = await searchParams;
 
-  /*
-   * The organisation being billed, from the server.
-   *
-   * The fallback this replaces resolved an unknown session to `'biz_ama'` and
-   * then to `ORGANISATIONS[0]`, so a checkout screen could show one organisation's
-   * name above another organisation's usage and total. On the page where
-   * somebody presses pay, that is the worst possible place for a guess.
-   */
-  const found = await load(() => org.current<OrganisationAccount>());
-  if (!found.ok) {
+  const back = (
+    <Link
+      href="/invoices"
+      className="inline-flex items-center gap-1.5 text-xs text-text-muted transition hover:text-accent"
+    >
+      <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
+      Back to invoices
+    </Link>
+  );
+
+  if (!invoiceId) {
     return (
       <PageShell>
-        <OrganisationOutage error={found.error} retryHref="/checkout" />
+        {back}
+        <Panel title="Choose an invoice" subtitle="Payment is always for a specific invoice.">
+          <p className="text-sm text-text-muted">
+            Open your invoices and press Pay beside the one you want to settle.
+          </p>
+        </Panel>
       </PageShell>
     );
   }
-  const organisation = found.data;
-  const plan = SUBSCRIPTION_PLANS[organisation.tier];
-  const downloads = organisation.reportsUsedThisPeriod;
-  const perDownload = downloadCharge(plan);
-  const total = periodCost(plan, downloads);
+
+  const found = await load(async () => {
+    const [organisation, invoice] = await Promise.all([
+      org.current<OrganisationAccount>(),
+      org.invoice<unknown>(invoiceId),
+    ]);
+    return { organisation, invoice: normaliseInvoice(invoice) };
+  });
+
+  if (!found.ok) {
+    return (
+      <PageShell>
+        {back}
+        <OrganisationOutage
+          error={found.error}
+          retryHref={`/checkout?invoice=${encodeURIComponent(invoiceId)}` as Route}
+        />
+      </PageShell>
+    );
+  }
+
+  const { organisation, invoice } = found.data;
+  const status = INVOICE_STATUS_COPY[invoice.overdue ? 'overdue' : invoice.status];
 
   return (
     <PageShell>
-      <Link
-        href="/invoices"
-        className="inline-flex items-center gap-1.5 text-xs text-text-muted transition hover:text-accent"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
-        Back to invoices
-      </Link>
-
-      <NotWired what="Paying an invoice" />
+      {back}
 
       <div>
         <h1 className="text-lg font-semibold tracking-tight text-text-primary">Checkout</h1>
         <p className="mt-1 text-sm text-text-muted">
-          {organisation.name} — {plan.billingPeriod} billing
+          {organisation.name} — invoice <span className="font-mono">{invoice.id}</span>
         </p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.1fr]">
         {/* ── What you are paying for ───────────────────────────────────── */}
-        <Panel title="Summary" subtitle="Every figure is integer pesewas.">
+        <Panel title="Summary" subtitle={`${status.label}${invoice.dueAtIso ? ` · due ${new Date(invoice.dueAtIso).toLocaleDateString('en-GB')}` : ''}`}>
           <dl className="space-y-3">
-            <Row
-              label={`${organisation.tier} subscription`}
-              detail={`${plan.seats} seats · ${plan.concurrentSurveys} concurrent surveys`}
-              value={formatCedis(plan.feePesewas)}
-            />
-            <Row
-              label="Report downloads"
-              detail={
-                isUnlimited(plan)
-                  ? 'Included on this plan'
-                  : `${downloads} × ${formatCedis(perDownload)}`
-              }
-              value={formatCedis(perDownload * downloads)}
-            />
+            {invoice.lines.length === 0 ? (
+              <p className="text-xs text-text-muted">This invoice lists no separate lines.</p>
+            ) : (
+              invoice.lines.map((line, index) => (
+                <Row
+                  key={`${line.label}-${index}`}
+                  label={line.label}
+                  detail={
+                    line.quantity !== null && line.unitPesewas !== null
+                      ? `${line.quantity} × ${formatCedis(line.unitPesewas)}`
+                      : undefined
+                  }
+                  value={line.amountPesewas !== null ? formatCedis(line.amountPesewas) : '—'}
+                />
+              ))
+            )}
 
             <div className="border-t border-hairline/[0.07] pt-3">
-              <Row label="Total due" value={formatCedis(total)} strong />
+              <Row
+                label={invoice.status === 'paid' ? 'Total paid' : 'Total due'}
+                value={formatCedis(invoice.totalPesewas)}
+                strong
+              />
             </div>
           </dl>
-
-          <p className="mt-4 text-2xs leading-relaxed text-text-faint">
-            Charged {plan.billingPeriod === 'annual' ? 'once a year' : 'each month'}. You were shown
-            the price of a download before taking each one — nothing here is a charge you have not
-            already seen.
-          </p>
         </Panel>
 
-        {/* ── How you are paying ────────────────────────────────────────── */}
-        <CheckoutPanel amountPesewas={total} />
+        {/* ── Paying it ─────────────────────────────────────────────────── */}
+        {invoice.status === 'paid' ? (
+          <div className="rounded-lg border border-hairline/12 bg-canvas-soft p-8 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-pill bg-success-wash">
+              <Check className="h-7 w-7 text-success" strokeWidth={2.5} />
+            </div>
+            <h2 className="mt-4 text-lg font-semibold text-text-primary">Paid</h2>
+            <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-text-muted">
+              {formatCedis(invoice.totalPesewas)}
+              {invoice.paidAtIso
+                ? ` received on ${new Date(invoice.paidAtIso).toLocaleDateString('en-GB')}.`
+                : ' received.'}
+            </p>
+            {invoice.receiptUrl ? (
+              <a
+                href={invoice.receiptUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-block text-sm font-medium text-accent underline underline-offset-2"
+              >
+                Open the receipt
+              </a>
+            ) : null}
+          </div>
+        ) : invoice.payable ? (
+          <div className="space-y-3">
+            {/* Back from PayDirect, but the service has not confirmed it yet. */}
+            {returned ? (
+              <p className="flex items-start gap-2 rounded-md border border-warning/25 bg-warning-wash/40 px-3.5 py-2.5 text-xs leading-relaxed text-text-secondary">
+                <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                We have not received confirmation of this payment yet. If you completed it, it can
+                take a few minutes to show — reload this page. If you did not, you can pay below.
+              </p>
+            ) : null}
+            <CheckoutPanel invoiceId={invoice.id} amountPesewas={invoice.totalPesewas} />
+          </div>
+        ) : (
+          <Panel title="This invoice cannot be paid" subtitle={status.label}>
+            <p className="text-sm text-text-muted">
+              Only an issued, unpaid invoice can be paid. If you think this is wrong, contact
+              support with the invoice number.
+            </p>
+          </Panel>
+        )}
       </div>
 
-      <Note tone="warn">
-        <span className="font-semibold">This checkout is simulated.</span> Nothing entered goes
-        anywhere and no payment is taken. Card and mobile-money payment is still being built. This
-        page exists so the flow can be walked through and corrected before money is real.
+      <Note>
+        You pay on PayDirect&rsquo;s own page. Dawuro never sees your card, wallet or bank details.
       </Note>
     </PageShell>
   );

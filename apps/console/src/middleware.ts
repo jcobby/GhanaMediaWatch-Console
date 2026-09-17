@@ -66,6 +66,7 @@ const ORGANISATION_PREFIXES = [
   '/affiliations',
   '/support',
   '/earnings',
+  '/commissions',
   '/agent',
   '/invoices',
   '/checkout',

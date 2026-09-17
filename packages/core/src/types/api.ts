@@ -36,6 +36,7 @@ export const INCIDENT_CATEGORIES = [
   'education',
   // Governance
   'corruption',
+  'whistleblower',
   'election',
   'chieftaincy',
   'land',
@@ -92,6 +93,20 @@ export interface IncidentMedia {
   height: number;
   durationMs?: number;
   byteSize?: number;
+  /*
+   * The copies the service makes when an upload completes. Each is null while
+   * `status` is `processing`, and may be absent on reports stored before the
+   * pipeline existed, so every reader needs a fallback.
+   */
+  /** H.264 MP4 web copy of a video (faststart). Always null for a photo. */
+  playbackUrl?: string | null;
+  /** The untouched original, served with its stored type. */
+  originalUrl?: string | null;
+  /** JPEG about 320px on the long edge — for lists. */
+  thumbUrl?: string | null;
+  /** JPEG about 1280px on the long edge — for a large still. */
+  viewUrl?: string | null;
+  status?: 'processing' | 'ready' | 'failed';
 }
 
 // ─── location ──────────────────────────────────────────────────────────────
@@ -253,6 +268,17 @@ export interface Incident {
   description: string;
   vettingState: VettingState;
   publishedAt: string;
+  /**
+   * Whether an editor has put this at the top of its desk's feed.
+   *
+   * True only while the lead holds — the service reports `false` once
+   * `leadUntil` has passed. Optional because older projections may not carry it.
+   */
+  lead?: boolean;
+  /** When the lead was set. Most recently led sorts first. */
+  leadAt?: string | null;
+  /** When the lead lapses on its own. Null means until an editor clears it. */
+  leadUntil?: string | null;
   media: IncidentMedia;
   location: PublicLocation;
   /** Null when `showDate` is false; truncated to midnight when `showTime` is. */

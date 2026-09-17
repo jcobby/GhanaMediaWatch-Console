@@ -51,6 +51,9 @@ import { AutomaticScorePanel } from './AutomaticScorePanel';
 import { NewsValuePanel, type NewsValueState } from './NewsValuePanel';
 import { useStoredNewsValue } from './useStoredNewsValue';
 import { ReleasePanel } from './ReleasePanel';
+import { CaseTabs, type CaseTab } from './CaseTabs';
+import { QueueThumb } from './QueueThumb';
+import { LeadPanel, type LeadState } from './LeadPanel';
 import { Button, Panel } from '@/components/ui';
 import { MediaFrame } from '@/components/MediaFrame';
 import {
@@ -131,6 +134,12 @@ export function Workbench({
   const [grouping, setGrouping] = useState<Grouping>('urgency');
   /* Today first, which is the day an editor opening the date view wants. */
   const [dateOrder, setDateOrder] = useState<DateOrder>('newest');
+  /*
+   * Which part of the case is open. Kept across reports on purpose: an editor
+   * sweeping the queue for news value should not be sent back to the footage on
+   * every row they open.
+   */
+  const [tab, setTab] = useState<CaseTab>('evidence');
   const groups = useMemo(
     () => groupQueue(queue, grouping, dateOrder),
     [queue, grouping, dateOrder],
@@ -170,8 +179,27 @@ export function Workbench({
     return out;
   }, [reports, cases, now]);
 
-  const [selectedId, setSelectedId] = useState<string | null>(queue[0]?.incident.id ?? null);
-  const selected = reports.find((r) => r.id === selectedId) ?? queue[0]?.incident ?? null;
+  /*
+   * Null until an editor picks something, which is not the same as "nothing is
+   * selected".
+   *
+   * It used to be seeded with `queue[0]` — the highest triage score — and the
+   * preview then stayed on that report no matter how the list was arranged. An
+   * editor choosing **Date, newest first** got a list headed TODAY and a pane
+   * showing something filed on the 4th, because urgency counts waiting time and
+   * the oldest report has by definition waited longest. Arithmetically right,
+   * and the opposite of what the person clicking "newest first" asked for.
+   *
+   * So the default follows the order on screen, and an explicit choice does not:
+   * once an editor has picked a report, changing the grouping rearranges the
+   * list around them rather than moving them off what they were reading.
+   */
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  /** The top of the list as it is actually displayed, whatever that ordering is. */
+  const firstShown = groups[0]?.items[0]?.incident ?? null;
+  const selected =
+    (selectedId ? reports.find((r) => r.id === selectedId) : null) ?? firstShown ?? null;
 
   /** An editor's own assessment, once they start one. Keyed by incident. */
   const [newsValue, setNewsValue] = useState<Record<string, NewsValueState>>({});
@@ -187,15 +215,38 @@ export function Workbench({
     stored: storedNewsValue,
     saveState,
     change: saveNewsValue,
-  } = useStoredNewsValue(selectedId);
+  } = useStoredNewsValue(selected?.id ?? null);
 
   /** Live editorial state, keyed by incident, seeded from the fixtures. */
   const [live, setLive] = useState<Record<string, EditorialCase>>(() =>
     Object.fromEntries(cases.map((c) => [c.incidentId, c])),
   );
   const [decisionError, setDecisionError] = useState<string | null>(null);
+  /**
+   * Why the last corroboration tick did not take, shown beside the checklist.
+   *
+   * **Separate from `decisionError` because it is read in a different place.**
+   * A tick is optimistic: the box moves at once and the request follows, and if
+   * the request fails the box moves back. That is the honest version of
+   * optimism — but the explanation was rendered down in the decision panel,
+   * several hundred pixels below and usually scrolled off the screen. So an
+   * editor ticked a box, watched it silently untick itself, and had no way at
+   * all to find out why. Reported exactly like that: "when I select under the
+   * corroboration, it unchecks."
+   *
+   * A failure has to appear where the failure happened.
+   */
+  const [checkError, setCheckError] = useState<{
+    id: CorroborationCheckId;
+    message: string;
+  } | null>(null);
   /** Set when a decision put the report on the feed, so the desk can say so. */
   const [published, setPublished] = useState<{ id: string; section: string | null } | null>(null);
+  /*
+   * Leads changed on this page, keyed by incident. The record's own `lead` is
+   * the starting point; what an editor sets here overrides it without a reload.
+   */
+  const [leads, setLeads] = useState<Record<string, LeadState>>({});
   const [states, setStates] = useState<Record<string, VerificationState>>(() =>
     Object.fromEntries(reports.map((r) => [r.id, r.verification])),
   );
@@ -345,6 +396,7 @@ export function Workbench({
       };
     };
 
+    setCheckError(null);
     setDecisionError(null);
     setLive(withCheck(!done));
     if (!meta) return;
@@ -372,11 +424,18 @@ export function Workbench({
           // Put it back. A tick the platform never received must not sit on
           // screen looking like recorded work.
           setLive(withCheck(done));
-          setDecisionError(
-            answer.error
+          /*
+           * The service's own sentence and its status. "That check could not be
+           * recorded" on its own tells an editor nothing they can act on, and
+           * the status is what separates a permission problem from a report
+           * that has moved on underneath them.
+           */
+          setCheckError({
+            id,
+            message: answer.error
               ? `${answer.error}${answer.upstreamStatus ? ` (${answer.upstreamStatus})` : ''}`
               : 'That check could not be recorded.',
-          );
+          });
           return;
         }
 
@@ -398,7 +457,10 @@ export function Workbench({
         }
       } catch {
         setLive(withCheck(done));
-        setDecisionError('The console could not reach its own server. Nothing was recorded.');
+        setCheckError({
+          id,
+          message: 'The console could not reach its own server. Nothing was recorded.',
+        });
       }
     })();
   };
@@ -429,38 +491,55 @@ export function Workbench({
           queueOpen ? '' : 'hidden',
         )}
       >
-        <div className="shrink-0 space-y-2.5 border-b border-hairline/[0.07] px-3.5 py-3">
-          {/*
-            The count, and what the order actually is.
+        {/*
+          The title of the page lives here now.
 
-            It read "most urgent first" whatever the view — so grouped by date,
-            with the newest day at the top, the header was describing a
-            different list from the one underneath it.
-          */}
-          <p className="flex items-baseline gap-1.5 text-xs text-text-muted">
-            <span className="tabular text-sm font-semibold text-text-primary">{queue.length}</span>
-            <span className="min-w-0 flex-1">
-              waiting
-              {grouping === 'urgency'
-                ? ', most urgent first'
-                : grouping === 'date'
-                  ? `, ${dateOrder === 'newest' ? 'newest' : 'oldest'} day first`
-                  : ', by subject'}
+          The desk used to open under a page header, then a count, then a
+          grouping control, then — under Date — a second control on a row of its
+          own: four bands before the first report. Title and count share a line,
+          and both controls share the next.
+        */}
+        <div className="shrink-0 space-y-2.5 border-b border-hairline/[0.07] px-3.5 pb-3 pt-4">
+          <div className="flex items-center gap-2">
+            <h1 className="text-base font-semibold tracking-[-0.01em] text-text-primary">Triage</h1>
+            <span className="tabular rounded-pill bg-accent-wash px-2 text-2xs font-semibold text-accent">
+              {queue.length}
             </span>
             <button
               type="button"
               onClick={() => setQueueOpen(false)}
               title="Hide the queue"
               aria-label="Hide the queue"
-              className="-mr-1 shrink-0 self-start rounded-xs p-1 text-text-faint transition hover:bg-canvas-raise hover:text-text-secondary"
+              className="-mr-1 ml-auto shrink-0 rounded-xs p-1 text-text-faint transition hover:bg-canvas-raise hover:text-text-secondary"
             >
               <PanelLeftClose className="h-3.5 w-3.5" strokeWidth={2} />
             </button>
+          </div>
+
+          {/*
+            What the order actually is, said once.
+
+            It read "most urgent first" whatever the view — so grouped by date,
+            with the newest day at the top, the header was describing a
+            different list from the one underneath it.
+          */}
+          <p className="-mt-1 text-2xs text-text-muted">
+            Waiting
+            {grouping === 'urgency'
+              ? ', most urgent first'
+              : grouping === 'date'
+                ? `, ${dateOrder === 'newest' ? 'newest' : 'oldest'} day first`
+                : ', by subject'}
           </p>
-          <GroupPicker value={grouping} onChange={setGrouping} />
-          {grouping === 'date' ? (
-            <DateOrderPicker value={dateOrder} onChange={setDateOrder} />
-          ) : null}
+
+          <div className="flex items-center gap-1.5">
+            <div className="min-w-0 flex-1">
+              <GroupPicker value={grouping} onChange={setGrouping} />
+            </div>
+            {grouping === 'date' ? (
+              <DateOrderPicker value={dateOrder} onChange={setDateOrder} />
+            ) : null}
+          </div>
         </div>
 
         <ul className="min-h-0 flex-1 overflow-y-auto">
@@ -515,11 +594,17 @@ export function Workbench({
                           Everything else is meta, and now reads as meta —
                           beneath, quieter, on one line.
                         */}
-                        <span className="flex items-start gap-2">
-                          <MediaKindMark kind={incident.media.kind} />
+                        {/*
+                          A preview beside the words, so the next report can be
+                          chosen by what was filmed as well as what was written.
+                          The preview says photo, clip or recording by itself, so
+                          the small kind glyph that did that job is not repeated.
+                        */}
+                        <span className="flex items-start gap-3">
+                          <QueueThumb incident={incident} />
                           <span
                             className={cn(
-                              'min-w-0 flex-1 line-clamp-2 text-xs leading-[1.5]',
+                              'min-w-0 flex-1 line-clamp-3 text-xs leading-[1.5]',
                               active ? 'font-medium text-text-primary' : 'text-text-secondary',
                             )}
                           >
@@ -540,6 +625,12 @@ export function Workbench({
                           <AssuranceBadge assurance={incident.assurance} showLabel={false} />
                           <VerificationBadge state={s} />
                           <NewsValueChip assessment={assessments[incident.id]} />
+                          {/* Already a top story — so the next one is chosen knowing that. */}
+                          {(leads[incident.id]?.lead ?? incident.lead) ? (
+                            <span className="rounded-pill bg-accent-wash px-1.5 text-2xs font-medium text-accent">
+                              Leading
+                            </span>
+                          ) : null}
                         </span>
 
                         {/*
@@ -604,25 +695,42 @@ export function Workbench({
         a horizontal scrollbar and a rating row with its last button cut off.
       */}
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+        {/*
+          What this report is, across the full width.
+
+          It sat inside the evidence column, so the rail beside it began level
+          with the headline and the checklist started a paragraph lower than the
+          footage it is checked against. Above both columns, the two halves of
+          the case start on the same line.
+        */}
+        <div className="mx-auto max-w-[1500px] px-6 pt-5">
+          <CaseHeader incident={selected} state={state} />
+        </div>
+
         <div
           className={cn(
-            'mx-auto flex max-w-[1500px] flex-col gap-5 px-6 py-5',
+            'mx-auto flex max-w-[1500px] flex-col gap-5 px-6 pb-6 pt-4',
             /*
               The split is tied to the queue, not to a guessed viewport.
 
-              At `2xl` this needed a 1536px *CSS* viewport, and a desk running
-              at 150% scaling on a 1920 screen has 1280 — so the two-column
-              layout never engaged for the person it was built for, and they
-              got back the single long column it exists to replace. Collapsing
-              the queue frees the width the split actually needs, and that is a
-              thing the editor controls rather than a number we hope about.
+              Measured rather than hoped: navigation is a top bar, so a 300px
+              queue and a 20rem rail leave the evidence about 600px from `xl`
+              with the queue open, and from `lg` with it closed. `2xl` needed
+              1536 and a desk at 125% scaling sat just under it — so the
+              decision, which gates nothing if it is off the screen, ended up
+              below everything else.
             */
-            queueOpen ? '2xl:flex-row 2xl:items-start' : 'xl:flex-row xl:items-start',
+            queueOpen ? 'xl:flex-row xl:items-start' : 'lg:flex-row lg:items-start',
           )}
         >
           {/* ── Evidence ────────────────────────────────────────────────── */}
           <div className="min-w-0 flex-1 space-y-4">
-            <CaseHeader incident={selected} state={state} />
+            <CaseTabs
+              value={tab}
+              onChange={setTab}
+              unrated={activeNewsValue.unassessed.length}
+              contacts={activeCase.contacts.length}
+            />
 
             {/*
               The footage, actually playing.
@@ -639,38 +747,55 @@ export function Workbench({
               minutes in was shown "The file could not be opened" on every report
               they clicked. `mediaHref` carries no signature and cannot go stale.
             */}
-            <MediaFrame
-              posterUrl={mediaHref(selected.id)}
-              {...(selected.media.kind === 'video' ? { videoUrl: mediaHref(selected.id) } : {})}
-              alt={selected.description}
-              when={formatExactCapture(selected.capturedAtIso, selected.capturedAtPrecision)}
-              /*
-                The fix when the service named no place — which is every report it
-                holds. Reading `label` alone stamped a time and nothing else onto
-                footage whose whole claim is that it was taken somewhere specific.
-              */
-              where={formatPlace(selected.location)}
-              isVideo={selected.media.kind === 'video'}
-              byteSize={selected.media.byteSize}
-            />
+            {tab === 'evidence' ? (
+              <>
+                <MediaFrame
+                  /*
+                    The service's 1280px JPEG: the photo itself, or a video's
+                    poster. The default media for a video is the MP4, which an
+                    `<img>` cannot draw, and a photo's original is megabytes the
+                    frame does not need. Older reports without copies fall back
+                    to the photo on the service's side.
+                  */
+                  posterUrl={mediaHref(selected.id, 'view')}
+                  {...(selected.media.kind === 'video' ? { videoUrl: mediaHref(selected.id) } : {})}
+                  alt={selected.description}
+                  when={formatExactCapture(selected.capturedAtIso, selected.capturedAtPrecision)}
+                  /*
+                    The fix when the service named no place — which is every report it
+                    holds. Reading `label` alone stamped a time and nothing else onto
+                    footage whose whole claim is that it was taken somewhere specific.
+                  */
+                  where={formatPlace(selected.location)}
+                  isVideo={selected.media.kind === 'video'}
+                  byteSize={selected.media.byteSize}
+                  /*
+                    Lower than the frame's own cap. Beside a rail and under a
+                    header, 62% of the viewport left the assurance note below the
+                    fold; the footage is still the largest thing on the screen.
+                  */
+                  className="max-h-[54vh]"
+                />
 
-            <HandlingNotice handling={selected.handling} />
+                <HandlingNotice handling={selected.handling} />
 
-            {/* Why this class, in the reviewer's terms. */}
-            <Panel className="p-4">
-              <p className="text-2xs font-semibold uppercase tracking-[0.14em] text-text-faint">
-                Capture assurance
-              </p>
-              <p className="mt-1.5 text-xs leading-relaxed text-text-secondary">
-                {assuranceMeta(selected.assurance).description}
-              </p>
-              {!assuranceMeta(selected.assurance).usableAlone ? (
-                <p className="mt-2 rounded-sm bg-warning-wash/40 px-2.5 py-2 text-2xs leading-relaxed text-text-secondary">
-                  Cannot stand alone. Something independent of the reporter is required before this
-                  may be described as verified.
-                </p>
-              ) : null}
-            </Panel>
+                {/* Why this class, in the reviewer's terms. */}
+                <Panel className="p-4">
+                  <p className="text-2xs font-semibold uppercase tracking-[0.14em] text-text-faint">
+                    Capture assurance
+                  </p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-text-secondary">
+                    {assuranceMeta(selected.assurance).description}
+                  </p>
+                  {!assuranceMeta(selected.assurance).usableAlone ? (
+                    <p className="mt-2 rounded-sm bg-warning-wash/40 px-2.5 py-2 text-2xs leading-relaxed text-text-secondary">
+                      Cannot stand alone. Something independent of the reporter is required before
+                      this may be described as verified.
+                    </p>
+                  ) : null}
+                </Panel>
+              </>
+            ) : null}
 
             {/*
               Placed after the evidence and beside the decision, which is the order
@@ -707,21 +832,23 @@ export function Workbench({
               The same reason `minmax(0,1fr)` is spelled out on the wide
               template rather than written as `1fr`.
             */}
-            <div className="grid grid-cols-1 gap-4 min-[1700px]:grid-cols-[15rem_minmax(0,1fr)] min-[1700px]:items-start">
-              <AutomaticScorePanel assessment={assessment} region={assessment.region} />
-              <NewsValuePanel
-                state={activeNewsValue}
-                region={assessment.region}
-                provisionalScore={assessment.score.score}
-                saveState={saveState}
-                onChange={(next) => {
-                  setNewsValue((prev) => ({ ...prev, [selected.id]: next }));
-                  saveNewsValue(selected.id, next);
-                }}
-              />
-            </div>
+            {tab === 'value' ? (
+              <div className="grid grid-cols-1 gap-4 min-[1700px]:grid-cols-[15rem_minmax(0,1fr)] min-[1700px]:items-start">
+                <AutomaticScorePanel assessment={assessment} region={assessment.region} />
+                <NewsValuePanel
+                  state={activeNewsValue}
+                  region={assessment.region}
+                  provisionalScore={assessment.score.score}
+                  saveState={saveState}
+                  onChange={(next) => {
+                    setNewsValue((prev) => ({ ...prev, [selected.id]: next }));
+                    saveNewsValue(selected.id, next);
+                  }}
+                />
+              </div>
+            ) : null}
 
-            <ContactLog contacts={activeCase.contacts} />
+            {tab === 'contact' ? <ContactLog contacts={activeCase.contacts} /> : null}
           </div>
 
           {/* ── Judgement ───────────────────────────────────────────────────
@@ -737,14 +864,19 @@ export function Workbench({
           <div
             className={cn(
               'w-full shrink-0 space-y-4',
+              /*
+                The height cap takes the 3.5rem top bar off the viewport as well
+                as the padding, or the bottom of the decision sits under the fold.
+              */
               queueOpen
-                ? '2xl:sticky 2xl:top-5 2xl:max-h-[calc(100vh-2.5rem)] 2xl:w-[21rem] 2xl:overflow-y-auto 2xl:pb-4'
-                : 'xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)] xl:w-[21rem] xl:overflow-y-auto xl:pb-4',
+                ? 'xl:sticky xl:top-5 xl:max-h-[calc(100vh-6rem)] xl:w-[20rem] xl:overflow-y-auto xl:pb-4'
+                : 'lg:sticky lg:top-5 lg:max-h-[calc(100vh-6rem)] lg:w-[20rem] lg:overflow-y-auto lg:pb-4',
             )}
           >
             <CorroborationPanel
               completed={activeCase.corroboration.completed}
               onToggle={toggleCheck}
+              failure={checkError}
             />
 
             {/*
@@ -771,6 +903,30 @@ export function Workbench({
               destination={(selected as { destination?: SubmissionDestination }).destination}
             />
 
+            {/*
+              Whether it leads the feed — the editor's call, separate from the
+              verification. Keyed on the report so the expiry choice does not
+              carry from one case to the next.
+            */}
+            <LeadPanel
+              key={selected.id}
+              incidentId={selected.id}
+              published={selected.vettingState === 'published' || published?.id === selected.id}
+              section={
+                published?.id === selected.id
+                  ? (published.section ?? selected.section ?? null)
+                  : (selected.section ?? null)
+              }
+              state={
+                leads[selected.id] ?? {
+                  lead: selected.lead ?? false,
+                  leadAt: selected.leadAt ?? null,
+                  leadUntil: selected.leadUntil ?? null,
+                }
+              }
+              onChange={(next) => setLeads((prev) => ({ ...prev, [selected.id]: next }))}
+            />
+
             <DecisionPanel
               state={state}
               assurance={selected.assurance}
@@ -781,7 +937,7 @@ export function Workbench({
                 (selected as { destination?: SubmissionDestination }).destination === 'public' ||
                 (selected as { destination?: SubmissionDestination }).destination === 'both'
               }
-              onDecide={(to, reason, section) => {
+              onDecide={(to, reason, section, lead) => {
                 /*
                  * Sent, then shown.
                  *
@@ -798,8 +954,22 @@ export function Workbench({
                     const res = await fetch(`/api/editorial/${id}`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ action: 'decide', to, reason, section }),
+                      // `lead` only when the editor ticked it; absent leaves any lead as it is.
+                      body: JSON.stringify({
+                        action: 'decide',
+                        to,
+                        reason,
+                        section,
+                        ...(lead ? { lead: true } : {}),
+                      }),
                     });
+                    if (res.ok && lead) {
+                      // Shown as leading at once; the Top story panel can change it.
+                      setLeads((prev) => ({
+                        ...prev,
+                        [selected.id]: { lead: true, leadAt: new Date().toISOString(), leadUntil: null },
+                      }));
+                    }
                     if (!res.ok) {
                       const answer = (await res.json()) as {
                         error?: string;
@@ -1097,29 +1267,25 @@ function DateOrderPicker({
   value: DateOrder;
   onChange: (next: DateOrder) => void;
 }) {
+  /*
+   * One button that flips, beside the grouping rather than on a row of its own.
+   * Two labelled halves did not fit next to three grouping options in a 300px
+   * queue, and a second row of controls is height taken from the list.
+   */
+  const current = DATE_ORDERS.find((option) => option.value === value) ?? DATE_ORDERS[0]!;
+  const next: DateOrder = value === 'newest' ? 'oldest' : 'newest';
+
   return (
-    <div className="flex items-center gap-1.5">
-      <ArrowDownUp className="h-3 w-3 shrink-0 text-text-faint" strokeWidth={2} />
-      <div className="flex flex-1 gap-0.5 rounded-sm bg-canvas-raise/60 p-0.5" role="group">
-        {DATE_ORDERS.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => onChange(option.value)}
-            aria-pressed={value === option.value}
-            title={option.title}
-            className={cn(
-              'flex-1 rounded-xs px-2 py-1 text-2xs font-medium transition',
-              value === option.value
-                ? 'bg-canvas text-text-primary shadow-sm'
-                : 'text-text-muted hover:text-text-secondary',
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-    </div>
+    <button
+      type="button"
+      onClick={() => onChange(next)}
+      title={`${current.title} — click for ${next === 'newest' ? 'newest' : 'oldest'} first`}
+      aria-label={`${current.label}. Switch to ${next} first`}
+      className="flex shrink-0 items-center gap-1 rounded-sm bg-canvas-raise/60 px-2 py-1.5 text-2xs font-medium text-text-secondary transition hover:text-text-primary"
+    >
+      <ArrowDownUp className="h-3 w-3 text-text-faint" strokeWidth={2} />
+      {value === 'newest' ? 'Newest' : 'Oldest'}
+    </button>
   );
 }
 
@@ -1188,9 +1354,19 @@ function NewsValueChip({ assessment }: { assessment: ProvisionalAssessment | und
 function CorroborationPanel({
   completed,
   onToggle,
+  failure,
 }: {
   completed: CorroborationCheckId[];
   onToggle: (id: CorroborationCheckId) => void;
+  /**
+   * The tick that did not take, and why.
+   *
+   * Passed down rather than kept here because the request lives with the rest
+   * of the desk's writes — but it has to be *rendered* here, next to the box
+   * that reverted. It used to surface in the decision panel several hundred
+   * pixels below, which on a full checklist is off the screen entirely.
+   */
+  failure: { id: CorroborationCheckId; message: string } | null;
 }) {
   const record = { completed, notes: null };
   const strength = corroborationStrength(record);
@@ -1241,6 +1417,24 @@ function CorroborationPanel({
           </>
         )}
       </p>
+
+      {/*
+        The failure, where the failure happened.
+
+        A tick that reverts with its explanation three panels down is a box that
+        unticks itself for no reason anybody can see — which is how this was
+        reported. It names the check as well, because an editor working through
+        seven of them needs to know which one did not take.
+      */}
+      {failure ? (
+        <p className="mt-3 rounded-sm border border-danger/25 bg-danger-wash/40 p-2.5 text-2xs leading-relaxed text-danger">
+          <span className="font-medium">
+            {CORROBORATION_CHECKS.find((c) => c.id === failure.id)?.label ?? 'That check'} was not
+            recorded.
+          </span>{' '}
+          {failure.message}
+        </p>
+      ) : null}
 
       <ul className="mt-3 space-y-1.5">
         {CORROBORATION_CHECKS.map((check) => {
@@ -1337,10 +1531,12 @@ function DecisionPanel({
   history: EditorialCase['decisions'];
   /** True when this decision would put the report on the public feed. */
   publishes: boolean;
-  onDecide: (to: VerificationState, reason: string, section: NewsSection) => void;
+  onDecide: (to: VerificationState, reason: string, section: NewsSection, lead: boolean) => void;
 }) {
   const [target, setTarget] = useState<VerificationState | null>(null);
   const [reason, setReason] = useState('');
+  /** Publish and lead the feed in one step. Off unless the editor asks. */
+  const [lead, setLead] = useState(false);
   /*
    * Which desk it runs on.
    *
@@ -1417,6 +1613,29 @@ function DecisionPanel({
                       </button>
                     ))}
                   </div>
+
+                  {/*
+                    Publish and lead in one step — for the story that should be
+                    at the top the moment it goes out. Off by default: most
+                    verified reports join the feed in order, and a lead is a
+                    choice somebody makes, not a side effect of verifying.
+                  */}
+                  <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-sm px-1 py-1">
+                    <input
+                      id="decision-lead"
+                      type="checkbox"
+                      checked={lead}
+                      onChange={(event) => setLead(event.target.checked)}
+                      className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
+                    />
+                    <span>
+                      <span className="block text-xs font-medium">Also lead the feed</span>
+                      <span className="mt-0.5 block text-2xs text-text-muted">
+                        Puts it at the top of the {section} desk, ahead of newer reports, until an
+                        editor clears it.
+                      </span>
+                    </span>
+                  </label>
                 </div>
               ) : null}
 
@@ -1447,9 +1666,16 @@ function DecisionPanel({
                 className="mt-3"
                 disabled={problem !== null}
                 onClick={() => {
-                  onDecide(target, reason.trim(), section);
+                  // A lead only rides along where this decision actually publishes.
+                  onDecide(
+                    target,
+                    reason.trim(),
+                    section,
+                    lead && publishes && target === 'verified_high_confidence',
+                  );
                   setTarget(null);
                   setReason('');
+                  setLead(false);
                 }}
               >
                 Record as {VERIFICATION_META[target].label.toLowerCase()}

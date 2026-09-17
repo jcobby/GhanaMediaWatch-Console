@@ -49,9 +49,21 @@ export async function GET(request: Request, context: { params: Promise<{ inciden
 
   const { incidentId } = await context.params;
 
+  /*
+   * Which copy: `?v=thumb` for a list, `?v=view` for a large still, nothing for
+   * the playable media. Anything else is the default rather than an error — a
+   * mistyped variant should still show the report.
+   */
+  const requested = new URL(request.url).searchParams.get('v');
+  const variant = requested === 'thumb' || requested === 'view' ? requested : 'default';
+
   let url: string | null;
   try {
-    url = await freshMediaUrl(incidentId, session.accessToken);
+    url = await freshMediaUrl(incidentId, session.accessToken, {
+      variant,
+      // An organisation's own reports are read under its scope header.
+      orgId: session.businessId ?? null,
+    });
   } catch (cause) {
     /*
      * The service refused the caller, not the console. A 403 from `/editorial`
@@ -59,13 +71,22 @@ export async function GET(request: Request, context: { params: Promise<{ inciden
      * and it is answered as a 404 for the reason above.
      */
     const status = cause instanceof ApiUnavailable ? cause.status : 502;
+    // The client is told 404 for a refusal; whoever runs the console sees the truth.
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`  MEDIA lookup failed ${incidentId} ${status}`);
+    }
     return NextResponse.json(
       { error: status === 403 || status === 404 ? 'Not found.' : 'The service did not answer.' },
       { status: status === 403 ? 404 : status },
     );
   }
 
-  if (!url) return NextResponse.json({ error: 'Not found.' }, { status: 404 });
+  if (!url) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`  MEDIA lookup found no media url ${incidentId}`);
+    }
+    return NextResponse.json({ error: 'Not found.' }, { status: 404 });
+  }
 
   const range = request.headers.get('range');
 
@@ -94,6 +115,28 @@ export async function GET(request: Request, context: { params: Promise<{ inciden
     return NextResponse.json({ error: 'The media service could not be reached.' }, { status: 502 });
   }
 
+  const upstreamType = upstream.headers.get('Content-Type') ?? 'application/octet-stream';
+
+  /*
+   * Printed once per media request, because this is the fact that was missing.
+   *
+   * "The file could not be opened" covered an expired signature, a 404, a codec
+   * the browser cannot decode and a container it will not even try — four
+   * different problems with one sentence, and diagnosing them from the outside
+   * cost two wrong answers. The content type and the status are now on the
+   * terminal of whoever is looking.
+   *
+   * Before the failure exit, not after it. It used to print only for answers
+   * that succeeded, so the requests anybody needed to see were the ones that
+   * never appeared.
+   */
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(
+      `  MEDIA ${upstream.status} ${incidentId} ${upstreamType}` +
+        `${range ? ` range=${range}` : ''}`,
+    );
+  }
+
   /*
    * 206 is a success. `Response.ok` is 200-299 so it is already included, and
    * this is only spelled out because treating a partial answer as a failure is
@@ -116,31 +159,70 @@ export async function GET(request: Request, context: { params: Promise<{ inciden
     return value ? { [name]: value } : {};
   };
 
-  const upstreamType = upstream.headers.get('Content-Type') ?? 'application/octet-stream';
-
   /*
-   * Printed once per media request, because this is the fact that was missing.
+   * A photograph is sent as a photograph, whatever the service labelled it.
    *
-   * "The file could not be opened" covered an expired signature, a 404, a codec
-   * the browser cannot decode and a container it will not even try — four
-   * different problems with one sentence, and diagnosing them from the outside
-   * cost two wrong answers. The content type and the status are now on the
-   * terminal of whoever is looking.
+   * Found on the live service: a photo report — stored as `image/jpeg`, filed
+   * from the phone as `image/jpeg`, integrity passed — streamed from
+   * `GET /v1/media/{id}` labelled as video. This route passed the label on, and
+   * a browser will not draw an `<img>` whose response says it is a video, so
+   * the desk showed "The file could not be opened" about a photograph that had
+   * arrived intact.
+   *
+   * The first bytes settle it. A JPEG, PNG, GIF or WebP signature is an image
+   * however it was labelled, and naming it correctly is what lets the browser
+   * draw it. Only at the start of the file — a range from the middle of a clip
+   * has no signature to read — and only when the label is not already an image.
+   * The chunk read is handed straight back into the stream, so nothing is
+   * buffered beyond it.
    */
-  if (process.env.NODE_ENV !== 'production') {
-    console.log(
-      `  MEDIA ${upstream.status} ${incidentId} ${upstreamType}` +
-        `${range ? ` range=${range}` : ''}`,
-    );
+  const imageTypeOf = (head: Uint8Array): string | null => {
+    const ascii = (from: number, to: number) => String.fromCharCode(...head.subarray(from, to));
+    if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'image/jpeg';
+    if (head.length >= 4 && ascii(1, 4) === 'PNG') return 'image/png';
+    if (head.length >= 4 && ascii(0, 4) === 'GIF8') return 'image/gif';
+    if (head.length >= 12 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
+    return null;
+  };
+
+  let body: ReadableStream<Uint8Array> = upstream.body;
+  let contentType = browserPlayable(upstreamType);
+  const fromStart = !range || /^bytes=0-/.test(range);
+
+  if (fromStart && !upstreamType.toLowerCase().startsWith('image/')) {
+    const reader = upstream.body.getReader();
+    const first = await reader.read();
+    const head = first.value ?? new Uint8Array(0);
+    const image = imageTypeOf(head);
+    if (image) {
+      contentType = image;
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`  MEDIA relabelled ${incidentId} ${upstreamType} -> ${image}`);
+      }
+    }
+    body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        if (first.done) controller.close();
+        else if (head.length) controller.enqueue(head);
+      },
+      async pull(controller) {
+        const next = await reader.read();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      },
+      cancel(reason) {
+        return reader.cancel(reason);
+      },
+    });
   }
 
-  return new NextResponse(upstream.body, {
+  return new NextResponse(body, {
     // The upstream's own status: 200 for the whole file, 206 for a range. A
     // hard 200 on a partial body is how a player ends up reading the middle of
     // a clip as its beginning.
     status: upstream.status,
     headers: {
-      'Content-Type': browserPlayable(upstreamType),
+      'Content-Type': contentType,
       ...passThrough('Content-Length'),
       // Without these two a browser will not offer a scrubber at all: the first
       // tells it ranges are available, the second says which one this is.
@@ -197,7 +279,29 @@ export async function GET(request: Request, context: { params: Promise<{ inciden
  */
 function browserPlayable(contentType: string): string {
   const base = contentType.split(';')[0]?.trim().toLowerCase() ?? '';
-  return base === 'video/quicktime' || base === 'video/x-quicktime' ? 'video/mp4' : contentType;
+  const quicktime = base === 'video/quicktime' || base === 'video/x-quicktime';
+  if (!quicktime) return contentType;
+
+  /*
+   * The codec parameter, where the phone sent one, decides whether relabelling
+   * is honest.
+   *
+   * An iPhone's `.mov` holding H.264 is an ISO base media file wearing the
+   * wrong label, and calling it `video/mp4` is a correction. The same `.mov`
+   * holding HEVC is not: no desktop browser can decode it, and relabelling only
+   * moves the failure from "unsupported source" — which a browser reports
+   * immediately and precisely — to a decode error several seconds later. Worse
+   * for the editor, and worse for anybody trying to work out why.
+   *
+   * So HEVC keeps its own label and the frame says what is wrong. New captures
+   * no longer produce it: the app now asks iOS for `avc1` explicitly. This is
+   * for the clips already stored, which need transcoding on the server — item 5
+   * in BACKEND-REQUESTS.
+   */
+  const codec = /codecs\s*=\s*"?([a-z0-9.]+)"?/i.exec(contentType)?.[1]?.toLowerCase();
+  if (codec?.startsWith('hvc1') || codec?.startsWith('hev1')) return contentType;
+
+  return 'video/mp4';
 }
 
 /*

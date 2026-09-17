@@ -6,6 +6,7 @@ import { pageOf, type Page } from './collection';
 import { captureDevPayload } from './devCapture';
 import { absoluteMedia, normaliseRoutingItem, type RoutingRow } from './normaliseRouting';
 import { placeFor, resolvePlaces, type Point } from './placeName';
+import { mapWithLimit } from './fanOut';
 import type {
   Branch,
   OrganisationAccount,
@@ -114,6 +115,21 @@ async function get<T>(path: string): Promise<T> {
 const MAX_PAGES = 50;
 
 /**
+ * How long the whole paging loop may take before it stops asking.
+ *
+ * `MAX_PAGES` bounds the number of requests; this bounds the *time*, which is
+ * what a person waiting at a blank screen actually experiences. Fifty pages at
+ * the fifteen-second request timeout is twelve and a half minutes of a page that
+ * has not rendered — and against a service that has stopped answering, which is
+ * precisely when the loop is slowest, every one of those pages times out.
+ *
+ * Stopping early returns the rows collected so far rather than throwing: a
+ * partial desk is worth more than an outage screen, and the alternative is not
+ * a complete desk, it is no desk at all.
+ */
+const COLLECT_DEADLINE_MS = 20_000;
+
+/**
  * Rows asked for per page.
  *
  * `limit` is documented now, and the maximum is 100 on `/editorial/queue` and
@@ -153,6 +169,23 @@ const TRACE_FIELDS = [
   'vettingState',
   'verification',
   'destination',
+  /*
+   * Who filed it — the question the trace could not answer.
+   *
+   * Asked as "reports sent when not signed in are not appearing in the editor's
+   * list". They do appear: a report filed with a device token was found in the
+   * queue this console fetched. What is missing is any way to *tell* — a guest
+   * report and an account report are identical on the wire and on screen, so an
+   * editor looking for one has nothing to look for.
+   *
+   * `PublicIncident` declares `reporter` and `publisher`; `/editorial/queue`
+   * publishes no response schema at all, so whether it carries them is a matter
+   * of observation. These record the answer the next time the desk is opened.
+   */
+  'reporter',
+  'publisher',
+  'origin',
+  'isAnonymous',
 ] as const;
 
 /**
@@ -208,8 +241,15 @@ async function collect<T>(
   const trace: PageTrace[] = [];
   let cursor: string | null = null;
   const seen = new Set<string>();
+  const startedAt = Date.now();
 
   for (let request = 0; request < MAX_PAGES; request += 1) {
+    /*
+     * The first page is always asked for — a deadline that can skip it would
+     * turn a slow service into an empty desk, which is the one thing this
+     * console must never render.
+     */
+    if (request > 0 && Date.now() - startedAt > COLLECT_DEADLINE_MS) break;
     const separator = path.includes('?') ? '&' : '?';
     const url: string = cursor
       ? `${path}${separator}limit=${PAGE_SIZE}&cursor=${encodeURIComponent(cursor)}`
@@ -341,13 +381,122 @@ export const org = {
   branches: <T>() => collect<T>('/org/branches'),
   affiliations: <T>() => collect<T>('/org/affiliations'),
   invoices: <T>() => collect<T>('/org/invoices'),
+  /*
+   * The organisation's higher commission rates for reports sent directly to it.
+   * Requested of the backend (BACKEND-REQUESTS.md item T); 404 until it lands.
+   */
+  commissionOffer: <T>() => get<T>('/org/commission-offer'),
+  saveCommissionOffer: <T>(body: unknown) => send<T>('/org/commission-offer', 'PUT', body),
+  invoice: <T>(id: string) => get<T>(`/org/invoices/${encodeURIComponent(id)}`),
+  /*
+   * Open PayDirect's checkout for one invoice.
+   *
+   * No stable key: this creates a payment page and charges nothing — the payer
+   * does that on PayDirect. Replaying an earlier request would hand back a
+   * checkout that may already have expired.
+   */
+  payInvoice: <T>(id: string, returnUrl: string) =>
+    send<T>(`/org/invoices/${encodeURIComponent(id)}/checkout`, 'POST', { returnUrl }),
   surveys: <T>() => collect<T>('/org/surveys'),
+  // Per-question counts plus a page of raw answers.
+  surveyResponses: <T>(id: string) => get<T>(`/org/surveys/${encodeURIComponent(id)}/responses`),
+  updateSurvey: <T>(id: string, body: { status?: 'open' | 'closed'; title?: string; description?: string }) =>
+    send<T>(`/org/surveys/${encodeURIComponent(id)}`, 'PATCH', body),
+  assignments: <T>() => collect<T>('/org/assignments'),
+  /*
+   * Moving a dispatch along. No stable key: the same status can legitimately be
+   * sent again after an assignment is reopened, and the service holds the state.
+   */
+  updateAssignment: <T>(id: string, body: { status: string; note?: string }) =>
+    send<T>(`/org/assignments/${encodeURIComponent(id)}`, 'PATCH', body),
+  /*
+   * Internal notes on one report, read back. `get` rather than `collect`: the
+   * endpoint documents no paging parameters, and a `limit` it does not accept
+   * would turn a short list into a 400.
+   */
+  notes: <T>(incidentId: string) =>
+    get<T>(`/org/incidents/${encodeURIComponent(incidentId)}/notes`),
   queries: <T>() => collect<T>('/org/queries'),
   plans: <T>() => collect<T>('/org/plans'),
   subscription: <T>() => get<T>('/org/subscription'),
   onboarding: <T>() => get<T>('/org/onboarding'),
+  /*
+   * The application, written where the platform can see it.
+   *
+   * `PUT` saves a step's answers and leaves it editable; `…/submit` sends it for
+   * review and is refused while the step's required documents are missing. A
+   * pending organisation may call these and nothing else under `/org/*` — every
+   * other route answers `403 check: "org_pending"` until it is approved.
+   */
+  saveOnboardingStep: <T>(stepId: string, payload: Record<string, unknown>) =>
+    send<T>(`/org/onboarding/steps/${encodeURIComponent(stepId)}`, 'PUT', payload),
+  submitOnboardingStep: <T>(stepId: string) =>
+    send<T>(`/org/onboarding/steps/${encodeURIComponent(stepId)}/submit`, 'POST'),
+  /*
+   * A document: declared, then uploaded.
+   *
+   * Two calls, because that is what the service offers. The first records
+   * `documentType`, `fileName`, `sha256`, `mimeType` and `byteSize` and answers
+   * with an `upload` target; the second sends the bytes, which the service
+   * checks against the declared `sha256` before it counts the document as
+   * attached.
+   *
+   * **This used to be the first call alone.** The service had nowhere to put a
+   * file, so a certificate of incorporation was recorded as a name and a hash
+   * and the bytes stayed on the applicant's computer — a platform owner was
+   * approving an organisation's access to citizens' footage on the strength of a
+   * filename. The upload endpoint landed on 16 September.
+   */
+  attachOnboardingDocument: <T>(body: {
+    documentType: string;
+    fileName: string;
+    sha256: string;
+    mimeType: string;
+    byteSize: number;
+  }) => send<T>('/org/onboarding/documents', 'POST', body),
+  /**
+   * The file itself.
+   *
+   * The documented route is called directly rather than the `upload.url` the
+   * declare step hands back: this request is made from the console's own server
+   * with the caller's token and organisation header attached, which is the one
+   * place either may exist. A signed URL would have to travel through the
+   * browser to be worth having.
+   */
+  uploadOnboardingDocumentBytes: async <T>(
+    documentType: string,
+    bytes: ArrayBuffer,
+    mimeType: string,
+  ): Promise<T> => {
+    const { token, orgId } = await caller();
+    const path = `/org/onboarding/documents/${encodeURIComponent(documentType)}/bytes`;
+    return apiRequest<T>(path, {
+      method: 'PUT',
+      token,
+      rawBody: bytes,
+      headers: { ...orgHeader(path, orgId), 'Content-Type': mimeType },
+    });
+  },
+  submitOnboarding: <T>() => send<T>('/org/onboarding/submit', 'POST'),
   audit: <T>() => collect<T>('/org/audit'),
   membershipRequests: <T>() => collect<T>('/org/membership-requests'),
+  /**
+   * Accept somebody into the organisation, or turn them down.
+   *
+   * The console says `accepted`; the service says `approved`. Translated at the
+   * boundary rather than renamed through the screens.
+   *
+   * Keyed on the request and the outcome, so a double-click decides once — and
+   * so a decline followed by a deliberate accept is still two decisions rather
+   * than a replay of the first.
+   */
+  decideMembership: <T>(requestId: string, decision: 'approved' | 'rejected') =>
+    send<T>(
+      `/org/membership-requests/${encodeURIComponent(requestId)}/decide`,
+      'POST',
+      { decision },
+      `membership:${requestId}:${decision}`,
+    ),
   internalSubmissions: <T>() => collect<T>('/org/internal-submissions'),
 
   /*
@@ -364,6 +513,19 @@ export const org = {
     ),
   publish: <T>(incidentId: string, body: unknown) =>
     send<T>(`/org/incidents/${encodeURIComponent(incidentId)}/publish`, 'POST', body),
+  /*
+   * Take a released report off the public feed.
+   *
+   * The licence is kept and the change is audited. Keyed on the report, so a
+   * double-click is one withdrawal.
+   */
+  unpublish: <T>(incidentId: string, reason: string) =>
+    send<T>(
+      `/org/incidents/${encodeURIComponent(incidentId)}/unpublish`,
+      'POST',
+      { reason },
+      `unpublish:${incidentId}`,
+    ),
   setStatus: <T>(incidentId: string, body: unknown) =>
     send<T>(`/org/incidents/${encodeURIComponent(incidentId)}/status`, 'POST', body),
   respond: <T>(incidentId: string, body: unknown) =>
@@ -461,6 +623,22 @@ export const platform = {
    */
   organisations: <T>() => collect<T>('/platform/businesses'),
   payouts: <T>() => collect<T>('/platform/payouts'),
+  /*
+   * Platform administrators.
+   *
+   * `get`, not `collect`: the answer is `{items, roles}`, and the roles the
+   * service offers would be dropped by reading only the items.
+   */
+  admins: <T>() => get<T>('/platform/admins'),
+  /** Volume, organisations and revenue for the operations dashboard. */
+  metrics: <T>() => get<T>('/platform/metrics'),
+  // Keyed on who and what, so a double-click creates one administrator.
+  createAdmin: <T>(body: { email: string; displayName: string; role: string }) =>
+    send<T>('/platform/admins', 'POST', body, `admin-create:${body.email}:${body.role}`),
+  updateAdmin: <T>(id: string, body: { role?: string; suspended?: boolean }) =>
+    send<T>(`/platform/admins/${encodeURIComponent(id)}`, 'PATCH', body),
+  removeAdmin: <T>(id: string) =>
+    send<T>(`/platform/admins/${encodeURIComponent(id)}`, 'DELETE', undefined, `admin-remove:${id}`),
   /**
    * The routing queue, in the shape the desk reads.
    *
@@ -510,8 +688,20 @@ export const platform = {
       onFirstPage: (raw) => captureDevPayload('routing-raw', raw),
     });
 
-    const merged = await Promise.all(
-      rows.map(async (row) => {
+    /*
+     * A few at a time, not one per row all at once.
+     *
+     * `incidentDetail` is two requests per report — it tries the editorial
+     * record before the public one — so a queue of fifty rows started a hundred
+     * requests in a single tick. That alone is past what the service accepts
+     * before it locks this console out of every page for twenty minutes, so the
+     * desk that fetched the most was the one most likely to break its
+     * neighbours. A row past the deadline is marked unreadable, which is a state
+     * this desk already draws.
+     */
+    const merged = await mapWithLimit(
+      rows,
+      async (row) => {
         const id = row.incidentId ?? row.id;
         if (!id) return row;
         const detail = await incidentDetail(id);
@@ -528,7 +718,8 @@ export const platform = {
          * arrived, and they route on exactly that.
          */
         return detail ? { ...detail, ...row } : { ...row, contentUnavailable: true };
-      }),
+      },
+      { onSkipped: (row) => ({ ...row, contentUnavailable: true }) },
     );
 
     await captureDevPayload('routing-merged', merged[0] ?? null);
@@ -583,6 +774,34 @@ export const platform = {
       `add-member:${orgId}:${body.email}`,
     ),
 
+  /**
+   * Decline a whole application, with a reason the applicant is shown.
+   *
+   * Until 16 September there was no endpoint for this: a reviewer could only
+   * send individual steps back, and the console answered its own Decline button
+   * with a 501 explaining that. The reason travels — an applicant told only
+   * "declined" reapplies with the same problem — and it surfaces for them on
+   * `GET /org/onboarding` as `rejectionReason`.
+   *
+   * Keyed on the application so a double-click declines once.
+   */
+  reject: <T>(id: string, reason: string) =>
+    send<T>(
+      `/platform/applications/${encodeURIComponent(id)}/reject`,
+      'POST',
+      { reason },
+      `reject:${id}`,
+    ),
+  /**
+   * The unpaid commissions a payout batch would collect.
+   *
+   * Opening a batch takes "all unpaid", and until this existed the operator
+   * pressed that without being able to see what was in it — the one screen in
+   * the console that moves money, asking for a decision about an amount it could
+   * not name. Each row says whether that reporter has a payout number, because
+   * the ones without are held rather than sent.
+   */
+  commissions: <T>() => collect<T>('/platform/commissions?status=unpaid'),
   decideStep: <T>(id: string, stepId: string, body: unknown) =>
     send<T>(
       `/platform/applications/${encodeURIComponent(id)}/steps/${encodeURIComponent(stepId)}/decide`,
@@ -594,6 +813,35 @@ export const platform = {
   // Releasing money. Keyed on the batch so a retry cannot pay twice.
   createPayoutBatch: <T>(body: unknown, key: string) =>
     send<T>('/platform/payouts/batches', 'POST', body, `payout-batch:${key}`),
+  payoutBatch: <T>(id: string) => get<T>(`/platform/payouts/batches/${encodeURIComponent(id)}`),
+  /*
+   * Sending the money.
+   *
+   * Keyed on the batch alone, so a double-click, a retried request or a second
+   * operator pressing the same button is one release. The body is `{}`: the
+   * service accepts no fields.
+   */
+  releasePayoutBatch: <T>(id: string) =>
+    send<T>(
+      `/platform/payouts/batches/${encodeURIComponent(id)}/release`,
+      'POST',
+      {},
+      `payout-release:${id}`,
+    ),
+  /*
+   * Trying one failed payment again.
+   *
+   * Keyed on the entry *and* the failure the operator was looking at. The entry
+   * alone would make a second retry, after a second failure, replay the first
+   * one and send nothing; a random key would let a double-click pay twice.
+   */
+  retryPayoutEntry: <T>(entryId: string, attempt: string) =>
+    send<T>(
+      `/platform/payouts/entries/${encodeURIComponent(entryId)}/retry`,
+      'POST',
+      {},
+      `payout-retry:${entryId}:${attempt}`,
+    ),
   setRecipients: <T>(incidentId: string, body: unknown) =>
     send<T>(`/platform/routing/${encodeURIComponent(incidentId)}/recipients`, 'POST', body),
   decideTakedown: <T>(id: string, body: unknown) =>
@@ -725,6 +973,21 @@ export async function withPlaceNames<T>(reports: T[]): Promise<T[]> {
 export const editorial = {
   queue: <T>() => collect<T>('/editorial/queue', { traceAs: 'editorial-queue-paging' }),
   decided: <T>() => collect<T>('/editorial/decided', { traceAs: 'editorial-decided' }),
+  /** Reports leading the feed now, most recently led first. Expired leads are omitted. */
+  leading: <T>() => collect<T>('/editorial/leading'),
+  /** Reports organisations have licensed and asked to publish under their name. */
+  publicationRequests: <T>() => collect<T>('/editorial/publication-requests'),
+  /*
+   * Approving publishes it credited to the organisation; declining sends the
+   * reason back. Keyed on the report, so a double-click is one decision.
+   */
+  decidePublication: <T>(incidentId: string, body: unknown) =>
+    send<T>(
+      `/editorial/publication-requests/${encodeURIComponent(incidentId)}/decide`,
+      'POST',
+      body,
+      `publication-decide:${incidentId}`,
+    ),
   workspace: <T>(incidentId: string) => get<T>(`/editorial/${encodeURIComponent(incidentId)}`),
   transition: <T>(incidentId: string, body: unknown) =>
     send<T>(`/editorial/${encodeURIComponent(incidentId)}/transition`, 'POST', body),
@@ -747,6 +1010,24 @@ export const publicApi = {
   byReference: <T>(reportId: string) =>
     apiRequest<T>(`/incidents/by-reference/${encodeURIComponent(reportId)}`),
   newsroom: <T>() => collect<T>('/newsroom/items', { anonymous: true }),
+  /**
+   * An invitation, looked up by the token in its link.
+   *
+   * Public by necessity: whoever follows the link has no account yet, which is
+   * the entire point of being invited. `GET /invites/{token}` landed and this
+   * page had been saying invitations "cannot be checked yet" ever since.
+   */
+  invite: <T>(token: string) => apiRequest<T>(`/invites/${encodeURIComponent(token)}`),
+  /**
+   * Redeem it, and join the organisation that issued it.
+   *
+   * Takes the person's own credentials rather than a session: they are joining,
+   * so there is nothing to be signed in as yet. No idempotency key — the service
+   * counts uses against the invite itself, and a key here would make a second
+   * person redeeming a multi-use team link look like a replay of the first.
+   */
+  acceptInvite: <T>(token: string, body: unknown) =>
+    apiRequest<T>(`/invites/${encodeURIComponent(token)}/accept`, { method: 'POST', body }),
 };
 
 // ─── the admin dashboards ──────────────────────────────────────────────────

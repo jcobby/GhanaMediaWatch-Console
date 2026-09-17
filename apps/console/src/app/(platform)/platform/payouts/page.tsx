@@ -1,8 +1,8 @@
-import type { CommissionEntry, PayoutBatch } from '@dawuro/core';
 import { PageHeader } from '@/components/shell';
-import { NotWired, Outage, load } from '@/components/ui';
+import { Outage, load } from '@/components/ui';
+import { PayoutsWorkspace } from '@/components/payouts/PayoutsWorkspace';
 import { platform } from '@/lib/consoleApi';
-import { PayoutsWorkspace } from './PayoutsWorkspace';
+import { normalisePayoutRun, summariseUnpaid } from '@/lib/payouts';
 
 /**
  * Money owed to reporters, and the batches that release it.
@@ -13,8 +13,21 @@ import { PayoutsWorkspace } from './PayoutsWorkspace';
  */
 export default async function Page() {
   const result = await load(async () => {
-    const batches = await platform.payouts<PayoutBatch>();
-    return { batches, ledger: batches.flatMap((b) => entriesOf(b)) };
+    const runs = (await platform.payouts<unknown>()).map((batch) => normalisePayoutRun(batch));
+    /*
+     * What a new batch would contain, read separately and allowed to fail.
+     *
+     * It is context for the release button rather than the subject of the page:
+     * an operator must still be able to see and release the batches that exist
+     * if this read goes down. Null means "we could not ask", which the screen
+     * says rather than printing a zero — on a money screen those are very
+     * different statements.
+     */
+    const unpaid = await platform
+      .commissions<unknown>()
+      .then(summariseUnpaid)
+      .catch(() => null);
+    return { runs, unpaid };
   });
 
   return (
@@ -24,25 +37,11 @@ export default async function Page() {
         title="Payouts"
         description="Reporter earnings, batched for release over mobile money."
       />
-      <NotWired what="Releasing a payout batch" />
       {result.ok ? (
-        <PayoutsWorkspace batches={result.data.batches} ledger={result.data.ledger} />
+        <PayoutsWorkspace runs={result.data.runs} unpaid={result.data.unpaid} />
       ) : (
         <Outage error={result.error} retryHref="/platform/payouts" />
       )}
     </>
   );
-}
-
-/**
- * The commission lines a batch carries, if it carries them inline.
- *
- * The API has no separate platform-wide ledger endpoint — `/me/commissions` is
- * the reporter's own — so the lines are read from the batches themselves. A
- * batch that does not embed them contributes none rather than inventing any:
- * an empty ledger is truthful, a fabricated one is not.
- */
-function entriesOf(batch: PayoutBatch): CommissionEntry[] {
-  const embedded = (batch as PayoutBatch & { entries?: CommissionEntry[] }).entries;
-  return Array.isArray(embedded) ? embedded : [];
 }

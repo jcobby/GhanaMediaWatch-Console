@@ -264,9 +264,23 @@ describe('the case pane fits the space it is given', () => {
      */
     const bench = code('Workbench.tsx');
     expect(bench).toMatch(/useState\(true\)/);
-    expect(bench).toMatch(
-      /queueOpen \? '2xl:flex-row 2xl:items-start' : 'xl:flex-row xl:items-start'/,
-    );
+    /*
+     * `xl` with the queue open, `lg` with it closed — measured, not guessed:
+     * with navigation in a top bar there is no sidebar, so a 300px queue and a
+     * 20rem rail leave the evidence column about 600px from these widths.
+     * `2xl` needed 1536 and a desk at 125% scaling sat just under it.
+     */
+    expect(bench).toMatch(/queueOpen \? 'xl:flex-row xl:items-start' : 'lg:flex-row lg:items-start'/);
+  });
+
+  test('the case is worked in tabs, with the decision beside them', () => {
+    // One long column put the checklist and the decision below two scoring
+    // panels and a contact log. Tabs keep the evidence short; the rail stays.
+    const bench = code('Workbench.tsx');
+    expect(bench).toMatch(/useState<CaseTab>\('evidence'\)/);
+    expect(bench).toMatch(/tab === 'evidence' \?/);
+    expect(bench).toMatch(/tab === 'value' \?/);
+    expect(bench).toMatch(/tab === 'contact' \?/);
   });
 
   test('the queue collapses to a strip that says how to get it back', () => {

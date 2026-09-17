@@ -126,11 +126,14 @@ that refuses them, where they correctly render the outage.
 
 ### Known backend gaps
 
-- **No endpoint creates an organisation.** `/auth/register` makes a reporter
-  account; every `/org/*` route needs membership; `/platform/applications` only
-  lists and decides. So registration cannot complete, nothing routes (there is
-  nobody to route to), and `/onboarding` says so instead of collecting company
-  documents into nothing.
+- **Organisation sign-up goes through the backend.** `/auth/register` with
+  `accountKind: "organisation"` creates a pending organisation; `/onboarding`
+  reads and writes `/org/onboarding/*`; `lib/onboarding.ts` normalises its
+  undocumented shape. A pending organisation may call only onboarding
+  (`check: "org_pending"`), and `/me` marks it `verified: false`, which keeps the
+  session on `/onboarding`. The console keeps no applications or documents on
+  disk. **Onboarding documents are recorded by name and SHA-256 only** — the
+  service stores no bytes yet (BACKEND-REQUESTS.md item O).
 - **`POST /auth/signin` takes an email with no password** and mints a token for
   whoever asks. Never authenticate through it.
 - No endpoint describes the caller — no `GET /me`, and the token carries no org

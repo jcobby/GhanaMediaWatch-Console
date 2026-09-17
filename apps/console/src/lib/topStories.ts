@@ -1,7 +1,5 @@
 import 'server-only';
-import { mkdir, readFile, rename, writeFile } from 'fs/promises';
-import { randomUUID } from 'crypto';
-import path from 'path';
+import { apiRequest } from './api';
 
 /**
  * How the top of the mobile feed behaves, as the platform desk sets it.
@@ -12,116 +10,95 @@ import path from 'path';
  * so they belong to the desk rather than to a constant compiled into an app
  * nobody can change without a release.
  *
- * **Held here, and not yet distributed.** The service has no endpoint that
- * carries a platform setting of any kind, so what the desk saves is recorded
- * durably and does not reach a phone: the app runs on its own defaults until
- * the backend serves this. Item 8 in BACKEND-REQUESTS asks for the one field
- * that closes it, and the page says so plainly where the control is rather than
- * letting an operator believe a slider moved something.
- *
- * The same file-store pattern as `applications`, for the same reason and with
- * the same instruction: **delete this module** once the backend owns it.
+ * **The service owns them now.** `GET /settings` is public and every phone reads
+ * it; `PUT /platform/settings` is for the platform owner and clamps on write.
+ * This module used to keep them in a file in `.data`, because no endpoint
+ * carried a platform setting of any kind — so what the desk saved never reached
+ * a phone. It is a thin client over the two endpoints now.
  *
  * Node-only. Middleware must not read it.
  */
-
-/** Where the file lives. Overridable so tests never touch the real one. */
-function storePath(): string {
-  const override = process.env.DAWURO_TOP_STORIES_FILE;
-  if (override) return override;
-  return path.join(process.cwd(), '.data', 'top-stories.json');
-}
 
 export interface TopStorySettings {
   /** Stories sharing the lead slot. */
   count: number;
   /** How long each holds, in milliseconds. */
   dwellMs: number;
+  /** When this console last saved it, if it did so in this request. */
   updatedAtIso: string;
   updatedByEmail: string;
 }
 
 /**
- * The bounds, and they are the app's bounds.
+ * The bounds, and they are the service's and the app's bounds.
  *
- * **Hand-synced with `topStorySettings.ts` in the mobile app**, which clamps
- * anything it is served to the same range. Two copies because the phone does
- * not consume this package — the same reason `NewsSection` is declared twice —
- * and they disagreeing would show as a desk offering a value the app silently
- * refuses to honour.
+ * The service clamps to the same range on write, and the mobile app's
+ * `topStorySettings.ts` clamps anything it is served. Checked here too so the
+ * form can say the limits in words instead of saving one value and showing
+ * another.
  *
  * Every limit is a typo somebody will make. Zero stories empties the top of the
  * feed; 200ms is a strobe; an hour is a carousel that never moves while
  * claiming to.
  */
-export const COUNT_RANGE = { min: 1, max: 10 } as const;
+export const COUNT_RANGE = { min: 1, max: 5 } as const;
 export const DWELL_SECONDS_RANGE = { min: 3, max: 20 } as const;
 
 const DEFAULTS = { count: 5, dwellMs: 6000 } as const;
 
-/**
- * What the desk has set, or the app's own defaults.
- *
- * A missing file is the ordinary state before anybody has touched this, and it
- * answers with exactly what the app would do on its own — so the page shows the
- * truth rather than an empty form. An unreadable file is a real fault and
- * throws, because silently showing defaults over a saved setting would have an
- * operator re-entering a value that was already there.
- */
-export async function readTopStories(): Promise<TopStorySettings> {
-  let raw: string;
-  try {
-    raw = await readFile(storePath(), 'utf8');
-  } catch (cause) {
-    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { ...DEFAULTS, updatedAtIso: '', updatedByEmail: '' };
-    }
-    throw cause;
-  }
-
-  const parsed: unknown = JSON.parse(raw);
-  if (!parsed || typeof parsed !== 'object') {
-    throw new Error(`Top-stories store at ${storePath()} is not an object.`);
-  }
-  const row = parsed as Partial<TopStorySettings>;
-  return {
-    ...clampSettings(row.count, secondsOf(row.dwellMs)),
-    updatedAtIso: row.updatedAtIso ?? '',
-    updatedByEmail: row.updatedByEmail ?? '',
-  };
+/** The `{ feed }` object both endpoints answer with. */
+interface SettingsBody {
+  feed?: { topStoryCount?: unknown; topStoryDwellMs?: unknown };
 }
 
 /**
- * Save what the desk chose, clamped on the way in.
+ * What the service is serving to phones right now.
  *
- * Clamped here as well as on the phone. A value that only the app refuses is a
- * setting that reads as saved and behaves as something else, and the operator
- * has no way to see the difference.
+ * Throws when the service cannot be reached. Showing the defaults over a
+ * setting the desk had changed would have an operator re-entering a value that
+ * was already live — an outage has to look like an outage.
+ */
+export async function readTopStories(): Promise<TopStorySettings> {
+  const body = await apiRequest<SettingsBody>('/settings', {});
+  return { ...fromFeed(body, DEFAULTS), updatedAtIso: '', updatedByEmail: '' };
+}
+
+/**
+ * Save what the desk chose, clamped on the way in and returned as stored.
+ *
+ * The answer is the service's stored value rather than what was sent, so a
+ * clamp on its side shows on the form instead of being hidden by ours.
  */
 export async function writeTopStories(input: {
   count: number;
   dwellSeconds: number;
   byEmail: string;
   atIso: string;
+  token: string;
 }): Promise<TopStorySettings> {
-  const settings: TopStorySettings = {
-    ...clampSettings(input.count, input.dwellSeconds),
+  const chosen = clampSettings(input.count, input.dwellSeconds);
+  const body = await apiRequest<SettingsBody>('/platform/settings', {
+    method: 'PUT',
+    token: input.token,
+    body: { feed: { topStoryCount: chosen.count, topStoryDwellMs: chosen.dwellMs } },
+  });
+  return {
+    ...fromFeed(body, chosen),
     updatedAtIso: input.atIso,
     updatedByEmail: input.byEmail,
   };
+}
 
-  /*
-   * Written via a temporary file and a rename. Writing in place would leave a
-   * half-written file if the process died mid-write, and a half-written file
-   * throws on read — losing the setting rather than keeping the old one.
-   */
-  const target = storePath();
-  await mkdir(path.dirname(target), { recursive: true });
-  const temporary = `${target}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
-  await rename(temporary, target);
-
-  return settings;
+function fromFeed(
+  body: SettingsBody | null | undefined,
+  fallback: { count: number; dwellMs: number },
+): { count: number; dwellMs: number } {
+  const feed = body?.feed;
+  if (!feed) return { count: fallback.count, dwellMs: fallback.dwellMs };
+  return clampSettings(
+    feed.topStoryCount ?? fallback.count,
+    secondsOf(feed.topStoryDwellMs ?? fallback.dwellMs),
+  );
 }
 
 function clampSettings(count: unknown, dwellSeconds: unknown): { count: number; dwellMs: number } {
@@ -137,7 +114,7 @@ function clampSettings(count: unknown, dwellSeconds: unknown): { count: number; 
   };
 }
 
-/** Stored in milliseconds, entered in seconds — nobody types 6000. */
+/** Served in milliseconds, entered in seconds — nobody types 6000. */
 function secondsOf(dwellMs: unknown): number {
   return typeof dwellMs === 'number' && Number.isFinite(dwellMs)
     ? dwellMs / 1000

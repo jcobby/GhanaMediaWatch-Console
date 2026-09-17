@@ -1,5 +1,6 @@
-import { AlertTriangle } from 'lucide-react';
+import { Info } from 'lucide-react';
 import { PageHeader } from '@/components/shell';
+import { Outage, load } from '@/components/ui';
 import { COUNT_RANGE, DWELL_SECONDS_RANGE, readTopStories } from '@/lib/topStories';
 import { TopStoriesForm } from './TopStoriesForm';
 
@@ -13,14 +14,12 @@ import { TopStoriesForm } from './TopStoriesForm';
  * a control on this desk rather than a constant compiled into an app nobody can
  * change without a release.
  *
- * **Which stories, deliberately not.** The rotation is the top of the order the
- * service already returns — the judgement editors made when they published each
- * report to a section. A second ranking here would be the platform desk quietly
- * overruling the newsroom, and it would be invisible to the people whose
- * decisions it displaced.
+ * **Which stories is the editors' call, not this page's.** Editors lead reports
+ * from the verification desk; the rotation takes led reports first, then the
+ * newest. This page decides only how many and how long.
  */
 export default async function Page() {
-  const settings = await readTopStories();
+  const result = await load(() => readTopStories());
 
   return (
     <>
@@ -30,44 +29,40 @@ export default async function Page() {
         description="How many stories lead the mobile feed, and how long each one holds."
       />
 
-      {/*
-        Not `NotWired`, and the difference matters.
+      {!result.ok ? (
+        <Outage error={result.error} retryHref="/platform/top-stories" />
+      ) : (
+        <>
+          {/*
+            What saving does, said where the control is. The warning that stood
+            here — "saved here, not yet sent to phones" — was true until the
+            service carried the setting, and a stale warning is how an operator
+            learns to read past the real ones.
+          */}
+          <div className="mx-7 mt-5 flex items-start gap-3 rounded-md border border-info/25 bg-info-wash/40 p-4">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" strokeWidth={2} />
+            <p className="min-w-0 text-xs leading-relaxed text-text-muted">
+              <span className="font-semibold text-text-primary">Sent to every phone.</span> A
+              change reaches the app within five minutes. Which stories lead is chosen by editors on
+              the verification desk; led stories come first, then the newest.
+            </p>
+          </div>
 
-        `NotWired` says nothing is saved. That would be false here — this is
-        written to disk and survives a reload. What it does not do is *reach a
-        phone*, because the service carries no platform setting of any kind. An
-        operator told the wrong one of those two things either re-enters a
-        setting that was already saved, or waits for an effect that is not
-        coming.
-      */}
-      <div className="mx-7 mt-5 flex items-start gap-3 rounded-md border border-warning/30 bg-warning-wash p-4">
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" strokeWidth={2} />
-        <div className="min-w-0">
-          <p className="text-xs font-semibold text-text-primary">
-            Saved here, not yet sent to phones
-          </p>
-          <p className="mt-1 text-xs leading-relaxed text-text-muted">
-            What you set is recorded and survives a reload. It does not reach the app yet — there is
-            nowhere for the service to carry a platform-wide setting, so phones use their own
-            defaults of 5 stories at 6 seconds each. It is on the list of work the service still
-            owes us, and this page will start taking effect the day it lands.
-          </p>
-        </div>
-      </div>
-
-      <TopStoriesForm
-        initial={{
-          count: settings.count,
-          // Entered in seconds, stored in milliseconds. Nobody types 6000.
-          dwellSeconds: Math.round(settings.dwellMs / 1000),
-          updatedAtIso: settings.updatedAtIso,
-          updatedByEmail: settings.updatedByEmail,
-        }}
-        bounds={{
-          count: { min: COUNT_RANGE.min, max: COUNT_RANGE.max },
-          dwell: { min: DWELL_SECONDS_RANGE.min, max: DWELL_SECONDS_RANGE.max },
-        }}
-      />
+          <TopStoriesForm
+            initial={{
+              count: result.data.count,
+              // Entered in seconds, served in milliseconds. Nobody types 6000.
+              dwellSeconds: Math.round(result.data.dwellMs / 1000),
+              updatedAtIso: result.data.updatedAtIso,
+              updatedByEmail: result.data.updatedByEmail,
+            }}
+            bounds={{
+              count: { min: COUNT_RANGE.min, max: COUNT_RANGE.max },
+              dwell: { min: DWELL_SECONDS_RANGE.min, max: DWELL_SECONDS_RANGE.max },
+            }}
+          />
+        </>
+      )}
     </>
   );
 }

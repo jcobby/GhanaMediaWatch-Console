@@ -1,39 +1,44 @@
 import Link from 'next/link';
 import type { Route } from 'next';
 import { ArrowRight, Share2, BadgeCheck } from 'lucide-react';
-import { formatRelativeTime, type OrganisationApplication } from '@dawuro/core';
+import { formatCedis, formatRelativeTime } from '@dawuro/core';
 import { PageHeader } from '@/components/shell';
 import { Panel, Outage, load } from '@/components/ui';
 import { platform } from '@/lib/consoleApi';
-import { applicationsAwaitingDecision } from '@/lib/applications';
+import { normaliseOnboarding } from '@/lib/onboarding';
+import { normaliseMetrics, type DayCount, type PlatformMetrics } from '@/lib/metrics';
 
 /**
  * The operator's console.
  *
  * Leads with what needs a person: the two queues someone is accountable for
- * draining. Both are read from the backend, because a queue length is the one
- * number on this page that someone acts on this morning.
+ * draining. Then the platform's volume and revenue, from `/platform/metrics`.
  */
 export default async function PlatformConsole() {
   const result = await load(async () => {
-    const [queue, applications, held] = await Promise.all([
+    const [queue, applications, metrics] = await Promise.all([
       platform.routing(),
-      platform.applications<OrganisationApplication>(),
+      platform.applications<Record<string, unknown>>(),
       /*
-       * Organisations that registered through this console.
-       *
-       * Counted here because this card is the only place anyone looks to find
-       * out whether there is approval work waiting, and it read zero while real
-       * newsrooms sat on `/onboarding` waiting to hear back. The backend cannot
-       * be told about them yet — no endpoint files an application — so the
-       * console holds them itself. See lib/applications.ts.
+       * Soft. The queues are the work; the figures are context. A metrics
+       * outage says so in its own panel rather than taking the queues with it.
        */
-      applicationsAwaitingDecision(),
+      platform
+        .metrics<unknown>()
+        .then(normaliseMetrics)
+        .catch(() => null),
     ]);
     return {
       awaitingRouting: queue.filter((r) => r.status === 'awaiting_routing'),
-      pendingApplications: applications.filter((a) => a.status === 'pending'),
-      held,
+      /*
+       * Waiting on a person: sent for review and not yet approved. A draft is
+       * somebody still typing, and counting it would send the owner to a queue
+       * with nothing to decide.
+       */
+      awaitingApproval: applications.filter(
+        (a) => a.status === 'pending' || (Boolean(a.submittedAtIso) && !a.approvedAtIso),
+      ),
+      metrics,
     };
   });
 
@@ -48,7 +53,7 @@ export default async function PlatformConsole() {
       {!result.ok ? (
         <Outage error={result.error} retryHref="/platform" />
       ) : (
-        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-7 py-6">
+        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-4 py-6 sm:px-7">
           {/* Queues first — the only things here that are anyone's job today. */}
           <div className="grid gap-4 sm:grid-cols-2">
             <QueueCard
@@ -56,18 +61,6 @@ export default async function PlatformConsole() {
               icon={<Share2 className="h-4 w-4" strokeWidth={2} />}
               label="Awaiting routing"
               count={result.data.awaitingRouting.length}
-              /*
-                "Oldest null" was on screen.
-
-                `formatRelativeTime` returns `string | null` — null for a date it
-                cannot read — and interpolating that into a template literal
-                stringifies it. The queue rows carry no `submittedAtIso`, so the
-                card read "Oldest null" to an operator, which looks like a fault
-                in the platform rather than a missing field.
-
-                Checked before it is used, so an absent timestamp shows how many
-                are waiting and simply says nothing about age.
-              */
               detail={oldestWaiting(result.data.awaitingRouting)}
               urgent={result.data.awaitingRouting.length > 0}
             />
@@ -75,42 +68,156 @@ export default async function PlatformConsole() {
               href="/platform/approvals"
               icon={<BadgeCheck className="h-4 w-4" strokeWidth={2} />}
               label="Organisations awaiting approval"
-              count={result.data.pendingApplications.length + result.data.held.length}
+              count={result.data.awaitingApproval.length}
               detail={
-                result.data.pendingApplications[0]?.organisationName ??
-                result.data.held[0]?.organisationName ??
-                'Nothing waiting'
+                result.data.awaitingApproval[0]
+                  ? normaliseOnboarding(result.data.awaitingApproval[0]).application
+                      .organisationName || 'An organisation'
+                  : 'Nothing waiting'
               }
-              urgent={result.data.pendingApplications.length + result.data.held.length > 0}
+              urgent={result.data.awaitingApproval.length > 0}
             />
           </div>
 
-          {/*
-            Volume, revenue and reach are absent rather than invented.
-
-            This block used to render submissions today, revenue this month,
-            payouts, active organisations and a fourteen-day trend — all from a
-            seeded `PLATFORM_METRICS` constant. The API exposes no endpoint that
-            can answer any of them: no metrics, no summary, no aggregate of any
-            kind.
-
-            Numbers on an operations console get quoted in meetings and put in
-            board packs. Rendering seeded figures under real queue counts is how
-            an invented revenue number ends up in front of the Ghana News Agency
-            as fact, so the space says what is missing instead.
-          */}
-          <Panel className="p-5">
-            <p className="text-2xs font-semibold uppercase tracking-wider text-text-faint">
-              Volume and revenue
-            </p>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-text-muted">
-              Not available yet. This console will not show figures it cannot verify, and these are
-              not yet measured. The two queues above are live.
-            </p>
-          </Panel>
+          {result.data.metrics ? (
+            <Figures metrics={result.data.metrics} />
+          ) : (
+            <Panel className="p-5">
+              <p className="text-2xs font-semibold uppercase tracking-wider text-text-faint">
+                Volume and revenue
+              </p>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-text-muted">
+                The figures could not be read just now. The two queues above are live.
+              </p>
+            </Panel>
+          )}
         </div>
       )}
     </>
+  );
+}
+
+/** "—" for a figure the service did not report. Never a zero standing in for one. */
+const num = (value: number | null) => (value === null ? '—' : value.toLocaleString('en-GB'));
+const money = (value: number | null) => (value === null ? '—' : formatCedis(value));
+
+function Figures({ metrics }: { metrics: PlatformMetrics }) {
+  const measured = formatRelativeTime(metrics.generatedAtIso);
+
+  return (
+    <section className="space-y-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-2xs font-semibold uppercase tracking-[0.14em] text-text-faint">
+          Volume and revenue
+        </h2>
+        {measured ? <p className="text-2xs text-text-faint">Measured {measured}</p> : null}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Figure label="Reports today" value={num(metrics.submissionsToday)} />
+        <Figure
+          label="Waiting for review"
+          value={num(metrics.pendingReview)}
+          warn={(metrics.pendingReview ?? 0) > 0}
+        />
+        <Figure
+          label="Published"
+          value={num(metrics.published)}
+          hint={metrics.submissionsTotal !== null ? `of ${num(metrics.submissionsTotal)} filed` : undefined}
+        />
+        <Figure
+          label="Active organisations"
+          value={num(metrics.organisationsActive)}
+          hint={
+            metrics.organisationsTotal !== null
+              ? `of ${num(metrics.organisationsTotal)} registered`
+              : undefined
+          }
+        />
+        <Figure label="Revenue this month" value={money(metrics.revenueThisMonthPesewas)} />
+        <Figure label="Subscriptions per month" value={money(metrics.subscriptionMrrPesewas)} />
+        <Figure label="Download charges this period" value={money(metrics.downloadChargesPesewas)} />
+        <Figure
+          label="Paid to reporters this month"
+          value={money(metrics.payoutsReleasedThisMonthPesewas)}
+        />
+      </div>
+
+      <Panel className="p-5">
+        <p className="text-xs font-medium text-text-secondary">Reports filed, last 14 days</p>
+        <DailyChart days={metrics.last14Days} />
+      </Panel>
+    </section>
+  );
+}
+
+function Figure({
+  label,
+  value,
+  hint,
+  warn = false,
+}: {
+  label: string;
+  value: string;
+  hint?: string | undefined;
+  warn?: boolean;
+}) {
+  return (
+    <Panel className="p-4">
+      <p className="text-2xs uppercase tracking-wider text-text-faint">{label}</p>
+      <p
+        className={
+          warn
+            ? 'tabular mt-1.5 text-xl font-semibold text-warning'
+            : 'tabular mt-1.5 text-xl font-semibold'
+        }
+      >
+        {value}
+      </p>
+      {hint ? <p className="text-2xs text-text-muted">{hint}</p> : null}
+    </Panel>
+  );
+}
+
+/**
+ * Fourteen bars on one scale.
+ *
+ * The tallest day sets the scale and is labelled with its count, so the height
+ * of every other bar can be read against a real number rather than guessed.
+ */
+function DailyChart({ days }: { days: DayCount[] }) {
+  if (days.length === 0) {
+    return <p className="mt-3 text-xs text-text-muted">No daily figures were reported.</p>;
+  }
+
+  const max = Math.max(...days.map((d) => d.count));
+  const label = (iso: string) =>
+    new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+
+  return (
+    <div className="mt-3">
+      <div className="flex items-baseline justify-between text-2xs text-text-faint">
+        <span>Busiest day: {max.toLocaleString('en-GB')}</span>
+      </div>
+      <div className="mt-2 flex h-28 items-end gap-1" role="img" aria-label="Reports filed per day over the last 14 days">
+        {days.map((day) => (
+          <div
+            key={day.date}
+            className="flex h-full min-w-0 flex-1 flex-col justify-end"
+            title={`${label(day.date)}: ${day.count}`}
+          >
+            <div
+              className={day.count === max && max > 0 ? 'rounded-t-xs bg-accent' : 'rounded-t-xs bg-accent/45'}
+              style={{ height: max > 0 ? `${Math.max(2, (day.count / max) * 100)}%` : '2px' }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-1.5 flex justify-between text-2xs text-text-faint">
+        <span>{label(days[0]!.date)}</span>
+        <span>{label(days[days.length - 1]!.date)}</span>
+      </div>
+    </div>
   );
 }
 

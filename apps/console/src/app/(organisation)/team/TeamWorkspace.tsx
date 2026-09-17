@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Building2,
   Check,
@@ -74,10 +75,21 @@ export function TeamWorkspace({
   organisations: OrganisationAccount[];
   businessId: string;
 }) {
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>('staff');
   const [query, setQuery] = useState('');
   const [decided, setDecided] = useState<Record<string, 'accepted' | 'rejected'>>({});
-  const [roster, setRoster] = useState(employees);
+  /*
+   * The staff list is the server's, not this component's.
+   *
+   * It used to be `useState`, seeded from the prop, so that accepting somebody
+   * could push an invented employee into it — a made-up id, a guessed role, a
+   * joined-at of *now*. That row is gone: a decision refreshes the page, and
+   * what appears is the employee the service actually created.
+   */
+  const roster = employees;
+  const [deciding, setDeciding] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
 
   const branchName = useMemo(() => new Map(branches.map((b) => [b.id, b.name])), [branches]);
 
@@ -95,40 +107,53 @@ export function TeamWorkspace({
     );
   }, [query, roster, branchName]);
 
-  const decide = (request: MembershipRequest, outcome: 'accepted' | 'rejected') => {
-    setDecided((prev) => ({ ...prev, [request.id]: outcome }));
-    if (outcome !== 'accepted') return;
-
-    /*
-     * An accepted person starts off duty with no specialisations and the
-     * lowest role. Everything that determines what reaches them is set
-     * deliberately afterwards rather than guessed at here — the cost of an
-     * over-permissioned new joiner is far higher than the cost of one more
-     * click.
-     */
-    setRoster((prev) => [
-      ...prev,
-      {
-        id: `emp_new_${request.id}`,
-        businessId: request.businessId,
-        branchId: request.requestedBranchId,
-        displayName: request.displayName,
-        email: request.email,
-        phone: request.phone,
-        role: 'viewer',
-        duties: [],
-        specialisations: [],
-        languages: ['en'],
-        shiftStatus: 'off_duty',
-        openAssignments: 0,
-        maxConcurrentAssignments: 5,
-        lastKnownLocation: null,
-        lastSeenAtIso: null,
-        acknowledgementRate: 1,
-        joinedAtIso: new Date().toISOString(),
-        active: true,
-      },
-    ]);
+  /**
+   * Accept somebody, or turn them down. Sent, then shown.
+   *
+   * **This was `setDecided` alone.** The row left the queue, a staff row
+   * appeared beside it, and the service was told nothing — so a reload put the
+   * person back in the queue, and in the meantime they could not see a single
+   * report. An access decision that only the browser knows about is worse than
+   * one that was never made, because somebody believes it happened.
+   *
+   * The invented staff row is gone with it. It was assembled here from the
+   * request — a made-up id, a guessed role, a joined-at of *now* — and sat in
+   * the list looking like a record the server held. The page refreshes instead,
+   * so what appears is the employee the service actually created.
+   */
+  const decide = async (request: MembershipRequest, outcome: 'accepted' | 'rejected') => {
+    setDeciding(request.id);
+    setFailure(null);
+    try {
+      // Kept on one line: `wiring.test.ts` recognises a screen that saves by
+      // the URL sitting directly after `fetch(`, and a wrapped call reads to it
+      // as a screen that changes nothing.
+      const res = await fetch(`/api/org/membership-requests/${encodeURIComponent(request.id)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: outcome }),
+      });
+      const raw = await res.text();
+      let answer: { error?: string } | null = null;
+      try {
+        answer = raw ? (JSON.parse(raw) as { error?: string }) : null;
+      } catch {
+        answer = null;
+      }
+      if (!res.ok) {
+        setFailure(
+          answer?.error ?? `That could not be sent — the service answered ${res.status}.`,
+        );
+        return;
+      }
+      // Only now: the queue is the service's, and this row has left it.
+      setDecided((prev) => ({ ...prev, [request.id]: outcome }));
+      router.refresh();
+    } catch {
+      setFailure('The console could not reach its own server. Nothing was decided.');
+    } finally {
+      setDeciding(null);
+    }
   };
 
   return (
@@ -193,6 +218,15 @@ export function TeamWorkspace({
 
         {tab === 'requests' ? (
           <div className="mt-4 space-y-2">
+            {/* The service's own answer, beside the queue it refers to. */}
+            {failure ? (
+              <p
+                role="alert"
+                className="rounded-md border border-danger/25 bg-danger-wash px-4 py-2.5 text-xs text-danger"
+              >
+                {failure}
+              </p>
+            ) : null}
             {pending.length === 0 ? (
               <Panel className="p-8 text-center">
                 <p className="text-sm">Nobody is waiting</p>
@@ -206,7 +240,8 @@ export function TeamWorkspace({
                   key={r.id}
                   request={r}
                   branchName={branchName.get(r.requestedBranchId ?? '')}
-                  onDecide={decide}
+                  busy={deciding === r.id}
+                  onDecide={(req, outcome) => void decide(req, outcome)}
                 />
               ))
             )}
@@ -327,10 +362,13 @@ function Stat({ label, value }: { label: string; value: string }) {
 function RequestRow({
   request,
   branchName,
+  busy = false,
   onDecide,
 }: {
   request: MembershipRequest;
   branchName?: string;
+  /** A decision on this request is with the service. */
+  busy?: boolean;
   onDecide: (r: MembershipRequest, outcome: 'accepted' | 'rejected') => void;
 }) {
   return (
@@ -369,10 +407,15 @@ function RequestRow({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => onDecide(request, 'rejected')}>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => onDecide(request, 'rejected')}
+          >
             <X className="h-3.5 w-3.5" /> Decline
           </Button>
-          <Button size="sm" onClick={() => onDecide(request, 'accepted')}>
+          <Button size="sm" loading={busy} onClick={() => onDecide(request, 'accepted')}>
             <Check className="h-3.5 w-3.5" /> Accept
           </Button>
         </div>

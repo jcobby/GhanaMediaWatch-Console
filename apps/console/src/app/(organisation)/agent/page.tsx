@@ -44,8 +44,8 @@ export default async function Page() {
     return (
       <PageShell>
         <PageIntro
-          title="Submit a report"
-          blurb="Filing under an institution rather than as a member of the public."
+          title="My reports"
+          blurb="What you have filed under this institution, and what became of it."
         />
         <OrganisationOutage error={result.error} retryHref="/agent" />
       </PageShell>
@@ -56,9 +56,18 @@ export default async function Page() {
 
   return (
     <PageShell>
+      {/*
+        Named for what the page is, not for what it refuses.
+
+        It was titled "Submit a report" and could not submit a report — the whole
+        body explains why not, and this is an Agent's *home*, so signing in
+        landed them on a page whose first act was to tell them to go away. The
+        note below is well argued and stays; it is context for a list of your own
+        work rather than the reason the page exists.
+      */}
       <PageIntro
-        title="Submit a report"
-        blurb="Filing under an institution rather than as a member of the public."
+        title="My reports"
+        blurb="What you have filed under this institution, and what became of it."
       />
 
       <Note tone="warn">
@@ -69,10 +78,15 @@ export default async function Page() {
       </Note>
 
       <StatGrid>
+        {/* Counted from what was read. These were typed in: "4", "2", and one named assembly. */}
         <Stat label="Filed by you" value={String(mine.length)} />
-        <Stat label="Licensed" value="4" tone="good" />
-        <Stat label="Awaiting review" value="2" tone="warn" />
-        <Stat label="Accreditation" value="Active" tone="good" hint="Accra Metropolitan Assembly" />
+        <Stat
+          label="Published"
+          value={String(mine.filter((i) => i.vettingState === 'published').length)}
+          tone="good"
+        />
+        <Stat label="Sent to your organisation" value={String(internal.length)} />
+        <Stat label="Filing for" value={session.businessName ?? 'Your organisation'} />
       </StatGrid>
 
       <Panel

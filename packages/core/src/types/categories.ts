@@ -153,6 +153,14 @@ export const CATEGORY_META: Record<IncidentCategory, CategoryMeta> = {
     hint: 'Bribery, extortion, misuse of office',
     hue: '#7C2D12',
   },
+  whistleblower: {
+    group: 'governance',
+    label: 'Whistleblower',
+    // An insider's report. Filed anonymous by default on the phone, because
+    // what the reporter knows is usually what identifies them.
+    hint: 'Wrongdoing seen from inside an organisation',
+    hue: '#3F5A8C',
+  },
   election: {
     group: 'governance',
     label: 'Elections',

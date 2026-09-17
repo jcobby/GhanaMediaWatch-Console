@@ -1,77 +1,160 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { DOCUMENT_REQUIREMENTS } from '@dawuro/core';
 import { readSession } from '@/lib/session';
-import { saveOnboarding, submitApplication } from '@/lib/applications';
+import { ApiUnavailable } from '@/lib/apiError';
+import { org } from '@/lib/consoleApi';
+import { normaliseOnboarding } from '@/lib/onboarding';
 
 /**
- * The onboarding forms, saved.
+ * The onboarding forms, saved on the service.
  *
- * An organisation registers, fills these in, and sends them for review — at
- * which point the Dawuro owner decides. This handler is the middle of that:
- * without it the wizard was four steps and five document slots held in React
- * state with no request behind any of it. An applicant could work through the
- * whole thing, press submit, and have every answer discarded on navigation,
- * with a confirmation screen telling them it had been received.
+ * This used to write to a JSON file on the console's own disk, because the
+ * backend had nowhere to put an application: `/auth/register` made reporters
+ * only, and every `/org/*` route needed an organisation that already existed.
+ * Registration now creates a pending organisation, so the application lives
+ * where the platform owner reviews it and survives a redeploy.
  *
- * Two actions, because they are genuinely different events. `save` happens
- * continuously as somebody types and must be cheap and forgiving. `submit`
- * happens once, is what puts the application in front of an operator, and
- * closes the application to further editing — an applicant who could still edit
- * would be changing the evidence under a reviewer mid-decision.
+ * Four actions:
  *
- * Writes to the console's own store rather than the API, because no endpoint
- * accepts an application. See `lib/applications.ts`.
+ *   - `save`     — keep a step's answers; the step stays editable.
+ *   - `send`     — save, then send that step for review.
+ *   - `document` — record an attached document.
+ *   - `submit`   — send the whole application to the platform owner.
+ *
+ * Every answer is the service's own application, normalised, so the wizard shows
+ * what was stored rather than what it assumes was stored.
  */
 
-const documentSchema = z.object({
-  id: z.string(),
-  fileName: z.string(),
-  storedAs: z.string(),
-  byteSize: z.number(),
-  contentType: z.string(),
-  uploadedAtIso: z.string(),
-});
+const STEP = z.enum(['organisation', 'officer', 'coverage', 'documents']);
 
-const stepSchema = z.object({
-  id: z.string(),
-  status: z.string(),
-  rejectionReason: z.string().nullable(),
-  submittedAtIso: z.string().nullable(),
-  reviewedAtIso: z.string().nullable(),
-  reviewedBy: z.string().nullable(),
-});
+/** The service's own ceiling for an onboarding document. */
+const MAX_BYTES = 25 * 1024 * 1024;
 
-const progressSchema = z.object({
-  organisation: z.object({
-    legalName: z.string(),
-    registrationNumber: z.string(),
-    tin: z.string(),
-  }),
-  officer: z.object({
-    name: z.string(),
-    role: z.string(),
-    idNumber: z.string(),
-    phone: z.string(),
-  }),
-  coverage: z.object({
-    address: z.string(),
-    city: z.string(),
-    areaLabel: z.string(),
-    radiusKm: z.string(),
-  }),
-  documents: z.array(documentSchema),
-  steps: z.array(stepSchema),
-});
+const ACCEPTED = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/heic',
+  'image/heif',
+  'image/webp',
+]);
 
 const schema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('save'), progress: progressSchema }),
-  z.object({ action: z.literal('submit'), progress: progressSchema }),
+  z.object({ action: z.literal('save'), stepId: STEP, payload: z.record(z.unknown()) }),
+  z.object({ action: z.literal('send'), stepId: STEP, payload: z.record(z.unknown()) }),
+  z.object({
+    action: z.literal('document'),
+    documentType: z.string().refine((id) => id in DOCUMENT_REQUIREMENTS, 'Unknown document type.'),
+    fileName: z.string().trim().min(1).max(200),
+    // Computed in the browser from the file itself, so it names these bytes.
+    sha256: z.string().regex(/^[a-f0-9]{64}$/, 'That file could not be read.'),
+    mimeType: z.string(),
+    byteSize: z
+      .number()
+      .int()
+      .positive('Choose a file to attach.')
+      .max(MAX_BYTES, 'That file is larger than 25 MB. Attach a smaller copy.'),
+  }),
+  z.object({ action: z.literal('submit') }),
 ]);
+
+/**
+ * The bytes of one document.
+ *
+ * A separate handler because a file is not JSON, and it is a `PUT` on this same
+ * path rather than `/api/onboarding/documents` deliberately: that path must not
+ * exist. The console once kept applications and their files on its own disk,
+ * which the platform owner could only see on the same machine and which a
+ * redeploy erased, and `registration.test.ts` keeps the path free so that cannot
+ * come back. Nothing is written here — the bytes are forwarded and forgotten.
+ *
+ * The document must be declared first (`action: "document"`), because the
+ * service checks these bytes against the `sha256` that declared them.
+ */
+export async function PUT(request: Request) {
+  const session = await readSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Sign in to continue your application.' }, { status: 401 });
+  }
+  if (!session.businessId) {
+    return NextResponse.json(
+      { error: 'This account has no organisation to apply for. Register one first.' },
+      { status: 403 },
+    );
+  }
+
+  const documentType = new URL(request.url).searchParams.get('documentType') ?? '';
+  if (!(documentType in DOCUMENT_REQUIREMENTS)) {
+    return NextResponse.json({ error: 'Unknown document type.' }, { status: 400 });
+  }
+
+  /*
+   * The type as the browser reported it, without its parameters — a
+   * `Content-Type` may arrive as `image/jpeg; charset=binary`.
+   *
+   * An unknown type is allowed through, exactly as the declare step allows an
+   * empty `mimeType`. A phone that cannot name a HEIC sends nothing at all, and
+   * refusing the file for that would reject the document rather than the
+   * problem. The service checks the bytes against the declared hash either way.
+   */
+  const mimeType = (request.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
+  if (mimeType && mimeType !== 'application/octet-stream' && !ACCEPTED.has(mimeType)) {
+    return NextResponse.json({ error: 'Attach a PDF or a photo of the document.' }, { status: 415 });
+  }
+
+  const bytes = await request.arrayBuffer();
+  if (bytes.byteLength === 0) {
+    return NextResponse.json({ error: 'That file is empty. Choose it again.' }, { status: 400 });
+  }
+  if (bytes.byteLength > MAX_BYTES) {
+    return NextResponse.json(
+      { error: 'That file is larger than 25 MB. Attach a smaller copy.' },
+      { status: 413 },
+    );
+  }
+
+  try {
+    await org.uploadOnboardingDocumentBytes(documentType, bytes, mimeType);
+    /*
+     * Re-read rather than trust the upload's own answer. What the wizard renders
+     * is the application as the service now holds it, so a document that did not
+     * attach cannot show as attached.
+     */
+    const raw = await org.onboarding();
+    return NextResponse.json(normaliseOnboarding(raw, session.businessName ?? ''));
+  } catch (cause) {
+    if (cause instanceof ApiUnavailable) {
+      return NextResponse.json(
+        {
+          error:
+            cause.status === 0
+              ? 'The service could not be reached. The file was not uploaded.'
+              : cause.message,
+        },
+        { status: cause.status >= 400 ? cause.status : 503 },
+      );
+    }
+    return NextResponse.json({ error: 'That file could not be uploaded.' }, { status: 500 });
+  }
+}
 
 export async function POST(request: Request) {
   const session = await readSession();
   if (!session) {
     return NextResponse.json({ error: 'Sign in to continue your application.' }, { status: 401 });
+  }
+  /*
+   * The organisation comes from the session, never from the request.
+   *
+   * The header that scopes these calls is filled from `session.businessId`, so
+   * one applicant cannot write to another's application by naming it.
+   */
+  if (!session.businessId) {
+    return NextResponse.json(
+      { error: 'This account has no organisation to apply for. Register one first.' },
+      { status: 403 },
+    );
   }
 
   let body: unknown;
@@ -84,45 +167,57 @@ export async function POST(request: Request) {
   const parsed = schema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
-      { error: 'That could not be saved. Check the form.' },
+      { error: parsed.error.issues[0]?.message ?? 'That could not be saved. Check the form.' },
       { status: 400 },
     );
   }
 
-  /*
-   * Keyed on the signed-in account, never on anything the browser sent.
-   *
-   * The application id is in the page's own data, so accepting one from the
-   * request body would let any signed-in account write over somebody else's
-   * application — including submitting it, or replacing the evidence attached
-   * to it.
-   */
-  const email = session.email;
-  const progress = parsed.data.progress as Parameters<typeof saveOnboarding>[1];
+  const input = parsed.data;
 
-  const saved = await saveOnboarding(email, progress);
-  if (!saved) {
+  try {
+    let raw: unknown;
+
+    if (input.action === 'save' || input.action === 'send') {
+      raw = await org.saveOnboardingStep(input.stepId, input.payload);
+      // Only after the answers are stored: sending an older copy for review
+      // would put the reviewer in front of something the applicant has changed.
+      if (input.action === 'send') raw = await org.submitOnboardingStep(input.stepId);
+    } else if (input.action === 'document') {
+      if (input.mimeType && !ACCEPTED.has(input.mimeType)) {
+        return NextResponse.json(
+          { error: 'Attach a PDF or a photo of the document.' },
+          { status: 415 },
+        );
+      }
+      const answer = await org.attachOnboardingDocument<{ application?: unknown }>({
+        documentType: input.documentType,
+        fileName: input.fileName,
+        sha256: input.sha256,
+        mimeType: input.mimeType || 'application/octet-stream',
+        byteSize: input.byteSize,
+      });
+      // The service answers `{document, application}`; re-read if it ever stops.
+      raw = answer?.application ?? (await org.onboarding());
+    } else {
+      await org.submitOnboarding();
+      raw = await org.onboarding();
+    }
+
+    return NextResponse.json(normaliseOnboarding(raw, session.businessName ?? ''));
+  } catch (cause) {
     /*
-     * No draft to write to. Either they have no application, or it is already
-     * under review — and an application under review is deliberately frozen.
+     * The service's own words.
+     *
+     * It says exactly what is wrong — "Required documents are missing for this
+     * step.", "Cannot submit application: steps_outstanding." — and a generic
+     * "could not be saved" would leave the applicant guessing which.
      */
-    return NextResponse.json(
-      { error: 'This application has already been sent for review and cannot be changed.' },
-      { status: 409 },
-    );
+    if (cause instanceof ApiUnavailable) {
+      return NextResponse.json(
+        { error: cause.status === 0 ? 'The service could not be reached. Nothing was saved.' : cause.message },
+        { status: cause.status >= 400 ? cause.status : 503 },
+      );
+    }
+    return NextResponse.json({ error: 'That could not be saved. Try again.' }, { status: 500 });
   }
-
-  if (parsed.data.action === 'save') {
-    return NextResponse.json({ status: saved.status });
-  }
-
-  const submitted = await submitApplication(email, new Date().toISOString());
-  if (!submitted) {
-    return NextResponse.json(
-      { error: 'This application could not be sent. Reload and try again.' },
-      { status: 409 },
-    );
-  }
-
-  return NextResponse.json({ status: submitted.status, submittedAtIso: submitted.submittedAtIso });
 }

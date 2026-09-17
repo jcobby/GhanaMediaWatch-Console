@@ -5,19 +5,19 @@ import { ApiUnavailable } from '@/lib/apiError';
 import { readSession } from '@/lib/session';
 
 /**
- * The verification desk's one write action.
+ * The verification desk's write actions.
  *
- * `POST /editorial/{incidentId}/transition` — a verification judgement, with the reason kept permanently.
+ * - `decide` — `POST /editorial/{incidentId}/transition`, a verification
+ *   judgement with the reason kept permanently, and optionally a lead.
+ * - `corroborate` — `POST /editorial/{incidentId}/corroboration`, one check.
+ * - `lead` — `PATCH /editorial/{incidentId}`, whether the report leads the feed.
  *
  * It used to send nothing at all: the decision panel called `setStates`, the
  * badge changed, the history grew a row, and the platform was told nothing —
  * an editor could work through a queue of nineteen and change none of it.
  *
- * **The body is no longer a guess.** The endpoint publishes no schema, but its
- * own validation error names the field and enumerates the permitted values, and
- * that is what the union below is copied from. The server's message is still
- * returned verbatim on failure, because it remains the only specification for
- * anything this does not yet cover.
+ * The server's message is returned verbatim on failure, because it is the most
+ * precise description of what went wrong that exists.
  */
 
 /**
@@ -29,9 +29,8 @@ import { readSession } from '@/lib/session';
  *           | 'corroboration_in_progress' | 'verified_high_confidence'
  *           | 'verified_in_part' | 'disputed' | 'rejected'
  *
- * Note what is absent: `published`. This endpoint moves a report through
- * review and cannot put it in front of anybody, which is why the release
- * control is an explanation rather than a button. See ReleasePanel.
+ * Note what is absent: `published`. Publishing is a consequence of verifying a
+ * public report, not a state anybody sends. See ReleasePanel.
  */
 const decideSchema = z.object({
   action: z.literal('decide'),
@@ -59,6 +58,9 @@ const decideSchema = z.object({
    * afterwards that everything lands on one desk.
    */
   section: z.enum(['ghana', 'africa', 'world', 'business', 'politics', 'sport']).optional(),
+  /** Publish and lead in one step. Omitted leaves the lead as it is. */
+  lead: z.boolean().optional(),
+  leadUntil: z.string().datetime().nullable().optional(),
 });
 
 /**
@@ -84,6 +86,20 @@ const corroborateSchema = z.object({
   independent: z.boolean(),
 });
 
+/**
+ * Whether the report leads the feed.
+ *
+ * Separate from `decide` because prominence is a separate judgement from
+ * verification: an editor must be able to lead a report published an hour ago,
+ * or take one off the top, without writing a new verification into a permanent
+ * history. `leadUntil` is only meaningful when leading.
+ */
+const leadSchema = z.object({
+  action: z.literal('lead'),
+  lead: z.boolean(),
+  leadUntil: z.string().datetime().nullable().optional(),
+});
+
 /** What `POST /editorial/{id}/transition` answers with, as published. */
 interface TransitionResult {
   incidentId?: string;
@@ -97,7 +113,30 @@ interface TransitionResult {
   auditHash?: string;
 }
 
-const schema = z.discriminatedUnion('action', [decideSchema, corroborateSchema]);
+/** What `PATCH /editorial/{id}` answers with, as published. */
+interface LeadResult {
+  incidentId: string;
+  /** False when `leadUntil` is already in the past. */
+  lead: boolean;
+  leadAt: string | null;
+  leadUntil: string | null;
+  section: string | null;
+}
+
+const schema = z.discriminatedUnion('action', [decideSchema, corroborateSchema, leadSchema]);
+
+/** The service's failure, returned in the shape every desk control reads. */
+function failed(cause: unknown, fallback: string) {
+  const failure = cause instanceof ApiUnavailable ? cause : null;
+  return NextResponse.json(
+    {
+      error: failure?.message ?? fallback,
+      code: failure?.code ?? 'INTERNAL',
+      upstreamStatus: failure?.status ?? 0,
+    },
+    { status: failure && failure.status >= 400 ? failure.status : 502 },
+  );
+}
 
 export async function POST(request: Request, context: { params: Promise<{ incidentId: string }> }) {
   const session = await readSession();
@@ -110,11 +149,8 @@ export async function POST(request: Request, context: { params: Promise<{ incide
    *
    * Middleware gates the page by URL prefix; this endpoint is reachable
    * directly. Publishing a report puts somebody's footage in front of every
-   * user of the app, and that is not gated by a redirect rule.
-   *
-   * A platform owner is included because the console lets one reach editorial
-   * work, but note the server has the final say and refuses them on this
-   * endpoint — which is why the routing desk no longer offers a release button.
+   * user of the app, and leading it puts it at the top — neither is gated by a
+   * redirect rule.
    */
   if (session.accountType !== 'editor' && session.accountType !== 'platform_owner') {
     return NextResponse.json({ error: 'Only the verification desk can do that.' }, { status: 403 });
@@ -186,15 +222,24 @@ export async function POST(request: Request, context: { params: Promise<{ incide
 
       return NextResponse.json({ ok: true, result, verification });
     } catch (cause) {
-      const failure = cause instanceof ApiUnavailable ? cause : null;
-      return NextResponse.json(
-        {
-          error: failure?.message ?? 'That check could not be recorded.',
-          code: failure?.code ?? 'INTERNAL',
-          upstreamStatus: failure?.status ?? 0,
+      return failed(cause, 'That check could not be recorded.');
+    }
+  }
+
+  if (input.action === 'lead') {
+    try {
+      const result = await apiRequest<LeadResult>(`/editorial/${encoded}`, {
+        method: 'PATCH',
+        body: {
+          lead: input.lead,
+          // An expiry on a lead being cleared means nothing; send null.
+          leadUntil: input.lead ? (input.leadUntil ?? null) : null,
         },
-        { status: failure && failure.status >= 400 ? failure.status : 502 },
-      );
+        token: session.accessToken,
+      });
+      return NextResponse.json({ ok: true, result });
+    } catch (cause) {
+      return failed(cause, 'The lead could not be changed.');
     }
   }
 
@@ -220,6 +265,9 @@ export async function POST(request: Request, context: { params: Promise<{ incide
           state: input.to,
           note: input.reason,
           ...(input.section ? { section: input.section } : {}),
+          ...(input.lead !== undefined
+            ? { lead: input.lead, ...(input.lead && input.leadUntil ? { leadUntil: input.leadUntil } : {}) }
+            : {}),
         },
         token: session.accessToken,
         /*
@@ -243,14 +291,6 @@ export async function POST(request: Request, context: { params: Promise<{ incide
      */
     return NextResponse.json({ ok: true, result });
   } catch (cause) {
-    const failure = cause instanceof ApiUnavailable ? cause : null;
-    return NextResponse.json(
-      {
-        error: failure?.message ?? 'That could not be recorded.',
-        code: failure?.code ?? 'INTERNAL',
-        upstreamStatus: failure?.status ?? 0,
-      },
-      { status: failure && failure.status >= 400 ? failure.status : 502 },
-    );
+    return failed(cause, 'That could not be recorded.');
   }
 }

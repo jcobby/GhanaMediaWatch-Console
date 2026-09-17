@@ -48,6 +48,7 @@ export default async function PlatformLayout({ children }: { children: React.Rea
       ...(pendingApprovals === undefined ? {} : { count: pendingApprovals }),
     },
     { href: '/platform/payouts', label: 'Payouts', icon: 'banknote' },
+    { href: '/platform/commissions', label: 'Commission rates', icon: 'banknote' },
     { href: '/platform/organisations', label: 'Organisations', icon: 'building' },
     // No badge: it is a setting, not a queue. A count beside it would imply
     // there is something waiting to be done.

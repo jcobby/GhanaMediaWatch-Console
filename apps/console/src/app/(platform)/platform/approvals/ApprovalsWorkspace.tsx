@@ -19,10 +19,10 @@ import {
   isUnlimited,
   planFor,
   type OrganisationApplication,
-  type OnboardingApplication,
 } from '@dawuro/core';
 import { Badge, Button, Panel } from '@/components/ui';
 import { ApplicationReview } from '@/components/ApplicationReview';
+import type { ReviewableApplication } from '@/lib/onboarding';
 import { cn } from '@/lib/cn';
 
 /**
@@ -81,7 +81,7 @@ export function ApprovalsWorkspace({
   inOnboarding,
 }: {
   applications: OrganisationApplication[];
-  inOnboarding: OnboardingApplication[];
+  inOnboarding: ReviewableApplication[];
 }) {
   const router = useRouter();
   const [decided, setDecided] = useState<Record<string, 'approved' | 'rejected'>>({});
@@ -94,9 +94,10 @@ export function ApprovalsWorkspace({
    * told nothing, and a reload brought the application back. An operator could
    * believe they had approved a newsroom that had never left the browser.
    *
-   * The console cannot decline an application the backend holds — the API
-   * publishes `approve` and no equivalent reject — so that answer comes back
-   * from the server and is shown rather than swallowed.
+   * Both answers reach the service now. Declining had no endpoint until 16
+   * September, so this button used to come back with a 501 explaining that the
+   * offending step had to be sent back instead; the reason now travels with the
+   * rejection and the applicant is shown it.
    */
   const decide = async (id: string, outcome: 'approved' | 'rejected', note?: string) => {
     setFailure(null);
@@ -121,7 +122,8 @@ export function ApprovalsWorkspace({
   };
   const pending = applications.filter((a) => !(a.id in decided));
 
-  if (pending.length === 0) {
+  // Both lists, or applications in onboarding were hidden behind "Nothing waiting".
+  if (pending.length === 0 && inOnboarding.length === 0) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-7 py-6">
@@ -142,9 +144,7 @@ export function ApprovalsWorkspace({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl space-y-3 px-7 py-6">
-        {/* The server's own answer. Some decisions this screen offers cannot be
-            sent at all — the API publishes no reject — and an operator has to
-            see that rather than watch the row quietly stay put. */}
+        {/* The server's own answer, rather than a row that quietly stays put. */}
         {failure ? (
           <p className="rounded-md border border-danger/25 bg-danger-wash px-4 py-2.5 text-sm text-danger">
             {failure}
@@ -162,7 +162,7 @@ export function ApprovalsWorkspace({
         {/* Organisations already in onboarding. Reviewed step by step rather
             than accepted or declined as one blob. */}
         {inOnboarding.map((app) => (
-          <Panel key={app.reference} className="p-5">
+          <Panel key={app.id || app.reference} className="p-5">
             <ApplicationReview application={app} />
           </Panel>
         ))}
@@ -230,9 +230,16 @@ function ApplicationCard({
         <div className="shrink-0 text-right">
           <p className="text-2xs uppercase tracking-wider text-text-faint">Requested</p>
           <p className="mt-px text-sm font-semibold capitalize">{application.requestedTier}</p>
-          <p className="tabular text-2xs text-text-muted">
-            {formatCedis(plan.feePesewas)}/{plan.billingPeriod === 'annual' ? 'yr' : 'mo'}
-          </p>
+          {/* An application naming a tier this console does not price shows the
+              tier and no figure. A reviewer deciding on a subscription must not
+              be shown a fee belonging to a different one. */}
+          {plan ? (
+            <p className="tabular text-2xs text-text-muted">
+              {formatCedis(plan.feePesewas)}/{plan.billingPeriod === 'annual' ? 'yr' : 'mo'}
+            </p>
+          ) : (
+            <p className="text-2xs text-text-faint">Unrecognised tier</p>
+          )}
         </div>
       </div>
 
@@ -291,11 +298,13 @@ function ApplicationCard({
             </span>
           ))}
         </div>
-        <p className="mt-2 text-2xs leading-relaxed text-text-muted">
-          {isUnlimited(plan)
-            ? 'Unlimited downloads on an annual plan.'
-            : `${formatCedis(plan.perDownloadPesewas ?? 0)} per download, ${plan.seats} seats.`}
-        </p>
+        {plan ? (
+          <p className="mt-2 text-2xs leading-relaxed text-text-muted">
+            {isUnlimited(plan)
+              ? 'Unlimited downloads on an annual plan.'
+              : `${formatCedis(plan.perDownloadPesewas ?? 0)} per download, ${plan.seats} seats.`}
+          </p>
+        ) : null}
       </div>
 
       {rejecting ? (

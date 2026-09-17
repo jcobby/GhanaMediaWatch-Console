@@ -30,6 +30,25 @@ export default async function Page() {
     return { cases, reports: reports as unknown as Incident[] };
   });
 
+  /*
+   * No page header over the desk.
+   *
+   * It spent a hundred pixels saying "Editorial / Triage / Ordered by what needs
+   * attention" above a screen where the sidebar already says Triage and the
+   * queue says how it is ordered — height taken from the footage and the
+   * decision, on the one screen that is short of it. The queue carries the title
+   * now. An outage keeps the header, because there is no queue to carry it.
+   */
+  if (result.ok) {
+    return (
+      <Workbench
+        reports={result.data.reports}
+        cases={result.data.cases}
+        editorName={user.displayName}
+      />
+    );
+  }
+
   return (
     <>
       <PageHeader
@@ -37,15 +56,7 @@ export default async function Page() {
         title="Triage"
         description="Ordered by what needs attention, not by what arrived first."
       />
-      {result.ok ? (
-        <Workbench
-          reports={result.data.reports}
-          cases={result.data.cases}
-          editorName={user.displayName}
-        />
-      ) : (
-        <Outage error={result.error} retryHref="/editorial" />
-      )}
+      <Outage error={result.error} retryHref="/editorial" />
     </>
   );
 }

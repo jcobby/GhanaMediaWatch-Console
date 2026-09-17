@@ -29,6 +29,23 @@ const PLAYBACK_FAILURE: Record<number, string> = {
 };
 
 /**
+ * What a file is, from its first bytes rather than its label.
+ *
+ * The label is what failed: a photograph on the live service arrived tagged as
+ * video, and the only way to tell a mislabelled JPEG from footage filed under
+ * the wrong kind is to look at the bytes themselves.
+ */
+function formatOf(head: Uint8Array): string {
+  if (head.length < 4) return 'too few bytes to tell';
+  const ascii = (from: number, to: number) => String.fromCharCode(...head.subarray(from, to));
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'the bytes are a JPEG';
+  if (ascii(1, 4) === 'PNG') return 'the bytes are a PNG';
+  if (ascii(4, 8) === 'ftyp') return `the bytes are ISO media, brand ${ascii(8, 12).trim()}`;
+  const hex = Array.from(head.subarray(0, 8), (b) => b.toString(16).padStart(2, '0')).join(' ');
+  return `the bytes start ${hex}`;
+}
+
+/**
  * How footage is shown anywhere in the console.
  *
  * Three things happen here that must happen identically on every screen:
@@ -114,6 +131,59 @@ export function MediaFrame({
    * `MediaError.code` separates them, and the browser has always set it.
    */
   const [mediaError, setMediaError] = useState<number | null>(null);
+  /*
+   * What the console's media route said, when the browser would not say.
+   *
+   * An `<img>` that fails carries no reason at all — no status, no code — so a
+   * photo that would not load showed the one sentence that fits every cause, and
+   * the only way to find out which was to go digging in a terminal. The route
+   * already answers with a status and a sentence; this asks it for one byte and
+   * puts that answer on the frame.
+   *
+   * One byte, because the question is "will you give me this file", not the
+   * file. A route that answers with bytes has done its job, and then the fault
+   * is what the browser made of them — so the type it was sent is what to show.
+   */
+  const [serverSaid, setServerSaid] = useState<string | null>(null);
+  /*
+   * Footage that arrived where a still was expected.
+   *
+   * Seen on the live service: a report filed as a photo whose media is served
+   * as an MP4 (brand `isom`, the service's own web copy). An `<img>` cannot draw
+   * that, and "the file could not be opened" was the wrong answer about a file
+   * that is perfectly watchable. When the bytes say video, play it.
+   */
+  const [videoFallback, setVideoFallback] = useState<string | null>(null);
+  const playable = videoUrl ?? videoFallback ?? undefined;
+  const diagnose = (src: string) => {
+    void fetch(src, { headers: { Range: 'bytes=0-15' }, cache: 'no-store' })
+      .then(async (response) => {
+        if (response.ok) {
+          const type = response.headers.get('Content-Type') ?? 'no content type';
+          // The first bytes say what the file is, whatever it was labelled.
+          const head = new Uint8Array(await response.arrayBuffer().catch(() => new ArrayBuffer(0)));
+          const isoMedia = head.length >= 8 && String.fromCharCode(...head.subarray(4, 8)) === 'ftyp';
+          // Once only: a fallback that also fails must end in a message, not a loop.
+          if (isoMedia && !videoUrl && !videoFallback) {
+            // The playable media itself, not the still variant that was asked for.
+            setVideoFallback(src.split('?')[0] ?? src);
+            setFailed(false);
+            return;
+          }
+          setServerSaid(
+            `The file arrived (${response.status}, ${type}, ${formatOf(head)}) but could not be shown here.`,
+          );
+          return;
+        }
+        const body: unknown = await response.json().catch(() => null);
+        const said =
+          body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string'
+            ? (body as { error: string }).error
+            : null;
+        setServerSaid(`The media route answered ${response.status}${said ? `: ${said}` : '.'}`);
+      })
+      .catch(() => setServerSaid('The console could not reach its own media route.'));
+  };
 
   /*
    * Too small to be footage, decided before the player is given it.
@@ -148,7 +218,7 @@ export function MediaFrame({
    * stamp matters more here than on a still, not less — this is the frame
    * somebody screenshots and forwards.
    */
-  if (videoUrl && !failed && !tooSmall) {
+  if (playable && !failed && !tooSmall) {
     return (
       <div
         className={cn(
@@ -157,14 +227,19 @@ export function MediaFrame({
         )}
       >
         <video
-          src={videoUrl}
-          poster={posterUrl || undefined}
+          src={playable}
+          // A still that turned out to be footage has no poster worth showing.
+          poster={videoUrl && posterUrl ? posterUrl : undefined}
           controls
           preload="metadata"
           playsInline
           onError={(event) => {
-            setMediaError(event.currentTarget.error?.code ?? null);
+            const code = event.currentTarget.error?.code ?? null;
+            setMediaError(code);
             setFailed(true);
+            // A decode failure is the browser's own verdict on bytes it received.
+            // Anything else may be the route refusing, which only the route can say.
+            if (code !== 3) diagnose(playable);
           }}
           className="absolute inset-0 h-full w-full object-contain"
         />
@@ -201,6 +276,19 @@ export function MediaFrame({
           </p>
 
           {/*
+            The route's own answer, once it has given one — the status and the
+            sentence that say which of the causes above this actually is.
+          */}
+          {/*
+            Not under a size verdict. A file too small to be footage is already
+            explained in plain words above, and a line of hex beneath that adds
+            noise to a message that was complete.
+          */}
+          {serverSaid && !tooSmall ? (
+            <p className="max-w-md font-mono text-2xs text-white/35">{serverSaid}</p>
+          ) : null}
+
+          {/*
             A way to the file when this browser will not play it.
 
             A codec problem is not a missing report: the bytes are there and an
@@ -209,9 +297,9 @@ export function MediaFrame({
             and on a decision this consequential, "we cannot show you this" is
             not an acceptable last word.
           */}
-          {videoUrl && !empty && !tooSmall ? (
+          {playable && !empty && !tooSmall ? (
             <a
-              href={videoUrl}
+              href={playable}
               target="_blank"
               rel="noreferrer"
               className="rounded-sm border border-white/20 px-2.5 py-1 text-2xs text-white/70 transition hover:border-white/40 hover:text-white"
@@ -235,7 +323,10 @@ export function MediaFrame({
       <img
         src={posterUrl}
         alt={alt}
-        onError={() => setFailed(true)}
+        onError={() => {
+          setFailed(true);
+          diagnose(posterUrl);
+        }}
         className={cn('relative mx-auto h-full object-contain', (failed || tooSmall) && 'hidden')}
       />
 

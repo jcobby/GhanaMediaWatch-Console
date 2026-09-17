@@ -217,7 +217,7 @@ test('a verification decision is sent before the row moves', () => {
    * change none of it, with a reload putting it all back.
    */
   const bench = read('app/(editorial)/editorial/Workbench.tsx');
-  const decide = bench.slice(bench.indexOf('onDecide={(to, reason, section)'));
+  const decide = bench.slice(bench.indexOf('onDecide={(to, reason, section'));
   expect(decide).toContain('fetch(');
   expect(decide).toContain('setStates(');
   expect(decide.indexOf('fetch(')).toBeLessThan(decide.indexOf('setStates('));
@@ -453,7 +453,8 @@ test('the verification desk can watch what it is ruling on', () => {
    */
   const bench = read('app/(editorial)/editorial/Workbench.tsx');
   expect(bench).toMatch(/videoUrl: mediaHref\(selected\.id\)/);
-  expect(bench).toMatch(/posterUrl=\{mediaHref\(selected\.id\)\}/);
+  // The screen-sized JPEG copy: a still an `<img>` can always draw.
+  expect(bench).toMatch(/posterUrl=\{mediaHref\(selected\.id, 'view'\)\}/);
 
   /*
    * And the signed URL is never put in front of the browser. It expires, and it
@@ -544,7 +545,7 @@ test('a frame that cannot show footage says which of the three reasons it is', (
    * difference can still be explained.
    */
   const frame = fs.readFileSync(path.resolve(__dirname, '../components/MediaFrame.tsx'), 'utf8');
-  expect(frame).toMatch(/onError=\{\(\) => setFailed\(true\)\}/);
+  expect(frame).toMatch(/onError=\{\(\) => \{\s*setFailed\(true\);/);
 
   const rendered = frame.replace(/\/\*[\s\S]*?\*\//g, ' ');
   // Nothing uploaded, filler, and a genuine decode failure.
@@ -554,7 +555,7 @@ test('a frame that cannot show footage says which of the three reasons it is', (
 
   // The size decides it, and the player is never handed a file this small.
   expect(rendered).toMatch(/byteSize < MIN_PLAUSIBLE_MEDIA_BYTES/);
-  expect(rendered).toMatch(/videoUrl && !failed && !tooSmall/);
+  expect(rendered).toMatch(/playable && !failed && !tooSmall/);
 
   /*
    * One floor, shared with the score.

@@ -1,50 +1,41 @@
-import type { OrganisationApplication, OnboardingApplication } from '@dawuro/core';
+import type { OrganisationApplication } from '@dawuro/core';
 import { PageHeader } from '@/components/shell';
 import { Outage, load } from '@/components/ui';
 import { platform } from '@/lib/consoleApi';
-import { applicationsAwaitingDecision, decidedApplications } from '@/lib/applications';
+import { normaliseOnboarding } from '@/lib/onboarding';
 import { ApprovalsWorkspace } from './ApprovalsWorkspace';
-import { HeldApplications } from './HeldApplications';
-import { DecidedApplications } from './DecidedApplications';
 
 /**
  * The gate on who may license footage filed by the public.
  *
- * Only pending applications are listed. A decided one is a record, not a task,
- * and mixing the two turns a work queue into an archive nobody trusts.
+ * One queue, from the service. This page used to merge it with applications the
+ * console kept in a file on its own disk, because registration could not create
+ * an organisation; it can now, so every application is here and nowhere else.
  */
 export default async function Page() {
   const result = await load(async () => {
-    const all = await platform.applications<OrganisationApplication & OnboardingApplication>();
+    const all = await platform.applications<Record<string, unknown>>();
+
+    /*
+     * Normalised, because `/platform/applications` sends steps as a map keyed by
+     * step id and the review panel reads a list. Handed over raw, the panel
+     * crashed on the first application.
+     */
+    const inOnboarding = all
+      .filter((row) => typeof row.reference === 'string' && !row.approvedAtIso)
+      .map((row) => normaliseOnboarding(row).application)
+      // Submitted first: those are waiting on a person. Drafts are still being typed.
+      .sort((a, b) => Number(Boolean(b.submittedAtIso)) - Number(Boolean(a.submittedAtIso)));
+
     return {
-      // Awaiting a yes or no.
-      pending: all.filter((a) => a.status === 'pending'),
-      // Already partway through onboarding, reviewed step by step.
-      inOnboarding: all.filter((a) => a.reference && !a.approvedAtIso),
+      pending: all.filter((row) => row.status === 'pending') as unknown as OrganisationApplication[],
+      inOnboarding,
     };
   });
 
-  /*
-   * Read separately from the backend queue, and on purpose.
-   *
-   * These are people who registered through this console and whom the API
-   * cannot yet be told about. Folding them into `load()` would mean a backend
-   * outage hid them, and they are the half that is always readable — they live
-   * on this machine. An operator seeing an outage for one queue and the other
-   * queue intact is accurate; losing both to one failure is not.
-   */
-  const held = await applicationsAwaitingDecision();
-  /*
-   * What was already answered, so a decision does not vanish on being made.
-   *
-   * Approving removed an organisation from the queue and put it nowhere: no
-   * confirmation the decision registered, no record of the choice, and no sign
-   * that approving does not by itself create the organisation. Since that step
-   * is manual, the approved list is the outstanding work.
-   */
-  const decided = await decidedApplications();
-
-  const pending = result.ok ? result.data.pending : [];
+  const waiting = result.ok
+    ? result.data.pending.length + result.data.inOnboarding.filter((a) => a.submittedAtIso).length
+    : 0;
 
   return (
     <>
@@ -52,33 +43,21 @@ export default async function Page() {
         eyebrow="Platform"
         title="Approvals"
         description={
-          // A count is a claim about the queue. While the backend is unreachable
-          // there is no queue to count, and "No organisations waiting" would be
-          // a statement the console cannot support.
+          // A count is a claim about the queue. While the service is unreachable
+          // there is no queue to count.
           !result.ok
-            ? held.length > 0
-              ? `The main queue could not be read. ${held.length} registered here are shown below.`
-              : 'The queue could not be read.'
-            : pending.length + held.length === 0
-              ? decided.length > 0
-                ? 'Nothing waiting. Already-decided applications are below.'
-                : 'No organisations waiting.'
-              : `${pending.length + held.length} organisations requesting access to footage.`
+            ? 'The queue could not be read.'
+            : waiting === 0
+              ? 'No applications waiting for a decision.'
+              : `${waiting} ${waiting === 1 ? 'organisation' : 'organisations'} waiting for a decision.`
         }
       />
-      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto">
-        {held.length > 0 ? (
-          <div className="px-7 pt-6">
-            <HeldApplications applications={held} />
-          </div>
-        ) : null}
-        {decided.length > 0 ? (
-          <div className={held.length > 0 ? 'px-7' : 'px-7 pt-6'}>
-            <DecidedApplications applications={decided} />
-          </div>
-        ) : null}
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {result.ok ? (
-          <ApprovalsWorkspace applications={pending} inOnboarding={result.data.inOnboarding} />
+          <ApprovalsWorkspace
+            applications={result.data.pending}
+            inOnboarding={result.data.inOnboarding}
+          />
         ) : (
           <Outage error={result.error} retryHref="/platform/approvals" />
         )}

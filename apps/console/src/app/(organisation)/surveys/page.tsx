@@ -1,19 +1,22 @@
+import { redirect } from 'next/navigation';
 import { ClipboardList, Coins, Users } from 'lucide-react';
 import {
   estimateSurveyCost,
   fillRate,
   formatCedis,
   formatRelativeTime,
-  isAcceptingResponses,
   planFor,
+  roleCan,
   type OrganisationAccount,
-  type Survey,
 } from '@dawuro/core';
 import { PageHeader } from '@/components/shell';
 import { OrganisationOutage } from '@/components/OrganisationOutage';
 import { PlanUnavailable } from '@/components/PlanUnavailable';
 import { Badge, Button, Panel, load } from '@/components/ui';
 import { org } from '@/lib/consoleApi';
+import { requireSession } from '@/lib/session';
+import { normaliseSurvey } from '@/lib/surveys';
+import { SurveyActions } from './SurveyActions';
 
 /**
  * Paid questions an organisation puts to the public.
@@ -23,20 +26,29 @@ import { org } from '@/lib/consoleApi';
  *
  * Cost is shown against the full response target rather than against responses
  * received, because that is what is committed the moment a survey goes live.
- * Showing spend-so-far would understate the liability and surprise someone at
- * the end of the month.
  */
 export default async function Page() {
   /*
-   * This organisation's own surveys, from the server.
+   * The sidebar has always gated this on `manage_surveys`; nothing else did.
    *
-   * `/org/surveys` is already scoped to the caller, so there is no client-side
-   * filter by organisation id — and no chance of showing one organisation the
-   * questions another is paying for.
+   * So the link was hidden from roles without the capability and the page was
+   * served to them anyway the moment they typed the URL — a menu entry standing
+   * in for a permission check. Surveys commit real money (reward × target is
+   * charged when one goes live), so the capability is now enforced where it is
+   * exercised.
+   *
+   * Only enforced when the account has a role: see the note on the inbox page.
+   */
+  const session = await requireSession();
+  if (session.role && !roleCan(session.role, 'manage_surveys')) redirect('/');
+
+  /*
+   * This organisation's own surveys, from the server, normalised — the list
+   * endpoint sends a summary without questions, reward or target.
    */
   const result = await load(async () => ({
     organisation: await org.current<OrganisationAccount>(),
-    surveys: await org.surveys<Survey>(),
+    surveys: (await org.surveys<unknown>()).map((survey) => normaliseSurvey(survey)),
   }));
 
   if (!result.ok) {
@@ -53,23 +65,34 @@ export default async function Page() {
   // The page states how many concurrent surveys the plan allows, which is a
   // number that has to be right or it is an invitation to break a limit.
   if (!plan) return <PlanUnavailable what="how many surveys your plan allows" />;
-  const live = mine.filter((s) => isAcceptingResponses(s));
+  const live = mine.filter((s) => s.accepting);
 
   return (
     <>
       <PageHeader
         eyebrow="Surveys"
         title="Paid questions"
-        description={`${live.length} of ${plan.concurrentSurveys} allowed running at once.`}
+        description={`${live.length} of ${plan.concurrentSurveys} allowed running at once. Setting one up from here is not ready yet: a survey's reward and its response target cannot be stored with it, and those two decide what it costs you.`}
         actions={
-          <Button size="sm" disabled={live.length >= plan.concurrentSurveys}>
+          /*
+            Disabled, and the reason is on the page rather than hidden.
+
+            The control was live and did nothing — no form behind it, nowhere to
+            go. Building the form is not the missing piece either: a survey can
+            be created with a title, a description and its questions, but the
+            reward per response and the response target are dropped. Those two
+            are the entire cost of a survey, and a form that takes them and
+            quietly loses them is worse than a button that admits it is not
+            ready. Tracked as item R in BACKEND-REQUESTS.md.
+          */
+          <Button size="sm" disabled>
             <ClipboardList className="h-3.5 w-3.5" /> New survey
           </Button>
         }
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-3xl space-y-3 px-7 py-6">
+        <div className="mx-auto max-w-3xl space-y-3 px-4 py-6 sm:px-7">
           {plan.concurrentSurveys === 0 ? (
             <Panel className="p-8 text-center">
               <p className="text-sm font-medium">Surveys are not on your plan</p>
@@ -90,9 +113,14 @@ export default async function Page() {
             </Panel>
           ) : (
             mine.map((survey) => {
-              const cost = estimateSurveyCost(survey.rewardPesewas, survey.responsesTarget);
-              const filled = fillRate(survey);
-              const accepting = isAcceptingResponses(survey);
+              const cost = survey.hasCost
+                ? estimateSurveyCost(survey.rewardPesewas, survey.responsesTarget)
+                : null;
+              const closes = survey.closesAtIso ? formatRelativeTime(survey.closesAtIso) : null;
+              const details = [
+                survey.questions.length > 0 ? `${survey.questions.length} questions` : null,
+                closes ? `${survey.accepting ? 'closes' : 'closed'} ${closes}` : null,
+              ].filter(Boolean);
 
               return (
                 <Panel key={survey.id} className="p-5">
@@ -100,46 +128,56 @@ export default async function Page() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <h2 className="text-sm font-semibold">{survey.title}</h2>
-                        <Badge tone={accepting ? 'success' : 'neutral'}>
-                          {accepting ? 'Live' : survey.status}
+                        <Badge tone={survey.accepting ? 'success' : 'neutral'}>
+                          {survey.accepting ? 'Live' : survey.status === 'closed' ? 'Closed' : 'Not open'}
                         </Badge>
                       </div>
-                      <p className="mt-1 text-xs leading-relaxed text-text-muted">
-                        {survey.description}
-                      </p>
+                      {survey.description ? (
+                        <p className="mt-1 text-xs leading-relaxed text-text-muted">
+                          {survey.description}
+                        </p>
+                      ) : null}
                     </div>
-                    <div className="shrink-0 text-right">
-                      <p className="tabular text-sm font-semibold">
-                        {formatCedis(cost.totalPesewas)}
-                      </p>
-                      <p className="text-2xs text-text-faint">committed</p>
-                    </div>
+                    {cost ? (
+                      <div className="shrink-0 text-right">
+                        <p className="tabular text-sm font-semibold">
+                          {formatCedis(cost.totalPesewas)}
+                        </p>
+                        <p className="text-2xs text-text-faint">committed</p>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="mt-4">
                     <div className="flex items-center justify-between text-2xs text-text-muted">
                       <span className="flex items-center gap-1.5">
                         <Users className="h-3 w-3" />
-                        {survey.responsesReceived} of {survey.responsesTarget} responses
+                        {survey.responsesTarget > 0
+                          ? `${survey.responsesReceived} of ${survey.responsesTarget} responses`
+                          : `${survey.responsesReceived} ${survey.responsesReceived === 1 ? 'response' : 'responses'}`}
                       </span>
-                      <span className="flex items-center gap-1.5">
-                        <Coins className="h-3 w-3" />
-                        {formatCedis(survey.rewardPesewas)} each
-                      </span>
+                      {survey.rewardPesewas > 0 ? (
+                        <span className="flex items-center gap-1.5">
+                          <Coins className="h-3 w-3" />
+                          {formatCedis(survey.rewardPesewas)} each
+                        </span>
+                      ) : null}
                     </div>
-                    <div className="mt-1.5 h-1 overflow-hidden rounded-pill bg-canvas-raise">
-                      <div
-                        className="h-full rounded-pill bg-accent"
-                        style={{ width: `${Math.round(filled * 100)}%` }}
-                      />
-                    </div>
+                    {survey.responsesTarget > 0 ? (
+                      <div className="mt-1.5 h-1 overflow-hidden rounded-pill bg-canvas-raise">
+                        <div
+                          className="h-full rounded-pill bg-accent"
+                          style={{ width: `${Math.round(fillRate(survey) * 100)}%` }}
+                        />
+                      </div>
+                    ) : null}
                   </div>
 
-                  <p className="mt-3 border-t border-hairline/[0.07] pt-3 text-2xs text-text-faint">
-                    {survey.questions.length} questions ·{' '}
-                    {survey.targetArea ? 'targeted by area' : 'anywhere in Ghana'} · closes{' '}
-                    {formatRelativeTime(survey.closesAtIso) ?? 'soon'}
-                  </p>
+                  {details.length > 0 ? (
+                    <p className="mt-3 text-2xs text-text-faint">{details.join(' · ')}</p>
+                  ) : null}
+
+                  <SurveyActions surveyId={survey.id} accepting={survey.accepting} />
                 </Panel>
               );
             })

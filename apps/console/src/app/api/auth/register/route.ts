@@ -3,54 +3,36 @@ import { z } from 'zod';
 import { apiRequest, isLiveBackend } from '@/lib/api';
 import { ApiUnavailable } from '@/lib/apiError';
 import { createSession } from '@/lib/session';
-import { registerApplication } from '@/lib/applications';
 
 /**
  * Register an organisation.
  *
- * Signs the applicant straight in, so the next thing they see is the wizard
- * rather than a confirmation page and a dead end. Registration and onboarding
- * are one continuous act from the applicant's side; splitting them across a
- * sign-out was our mistake, not theirs.
+ * `POST /auth/register` with `accountKind: "organisation"` creates the account,
+ * a **pending** organisation and the applicant's owner membership in one call,
+ * so the next thing they see is the onboarding wizard writing to their own
+ * application on the service.
  *
- * **What this can and cannot do.** It creates a real account on the backend, so
- * the session carries a real credential and the applicant can sign in again.
- * It cannot create the *organisation*: the API has no endpoint that does —
- * `/auth/register` is documented as "Register a reporter account", every
- * `/org/*` route requires membership of an organisation that already exists,
- * and `/platform/applications` only lists, with no POST on it or anywhere else.
+ * Before the backend could do that, this route created a reporter account and
+ * filed the organisation's details in a JSON file on the console's disk. The
+ * platform owner could only see applications made on the same machine, and a
+ * redeploy lost every one of them.
  *
- * What it does instead is **file the application with the console**, which holds
- * it until the backend can take it. Before that, the organisation's details went
- * into the session cookie and nowhere else: they died on sign-out, and no
- * operator ever saw them, so the approvals queue read zero while somebody sat on
- * `/onboarding` waiting. Filing it means the platform owner has something to act
- * on and the applicant can close the tab. See `lib/applications.ts`.
- *
- * This previously invented a `businessId` locally and wrote a session with no
- * backend token at all. The applicant was signed in, sent to `/onboarding`, and
- * the first thing that screen did was ask the API a question with no credential
- * — which surfaced as "Signed out. Your session ended." on a page they had
- * never been signed in to.
+ * Signs the applicant straight in. Registration and onboarding are one
+ * continuous act from their side.
  */
 const schema = z.object({
   organisationName: z.string().trim().min(1, 'Enter the organisation name'),
-  sector: z.string().trim().min(1, 'Choose a sector'),
+  sector: z.enum(['government', 'media', 'utility', 'insurance', 'ngo', 'research', 'other'], {
+    errorMap: () => ({ message: 'Choose a sector' }),
+  }),
   contactName: z.string().trim().min(1, 'Enter your name'),
   email: z.string().trim().email('Enter a valid work email'),
   phone: z.string().trim().min(6, 'Enter a phone number'),
   /*
-   * The credential that lets them back in.
-   *
-   * Registration used to collect none, so an applicant whose session expired
-   * had no way to return to their own application.
+   * The credential that lets them back in. The service's floor is six; eight is
+   * asked for here, and the form says so before submit.
    */
   password: z.string().min(8, 'Choose a password of at least 8 characters'),
-  /*
-   * Chosen at registration, checked at onboarding. Optional here because an
-   * organisation can skip ahead and set them later — the wizard is where they
-   * become binding.
-   */
   interests: z.array(z.string()).optional(),
   tier: z.string().optional(),
   expectedMonthlyDownloads: z.number().optional(),
@@ -60,6 +42,11 @@ interface TokenEnvelope {
   accessToken: string;
   refreshToken?: string;
   expiresAt?: string;
+  me?: {
+    userId?: string;
+    orgId?: string | null;
+    memberships?: { orgId?: string; name?: string }[];
+  };
 }
 
 export async function POST(request: Request) {
@@ -74,9 +61,7 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     /*
      * Zod's default for a missing field is the bare word "Required", which
-     * tells the reader nothing about which field. Every message above is
-     * written out, and the field name is appended for anything that slips
-     * through — an error nobody can act on is worse than no error.
+     * tells the reader nothing about which field.
      */
     const issue = parsed.error.issues[0];
     const field = issue?.path.join('.') ?? '';
@@ -86,6 +71,7 @@ export async function POST(request: Request) {
   }
 
   const input = parsed.data;
+  const email = input.email.trim().toLowerCase();
 
   if (!isLiveBackend) {
     return NextResponse.json(
@@ -99,9 +85,11 @@ export async function POST(request: Request) {
     tokens = await apiRequest<TokenEnvelope>('/auth/register', {
       method: 'POST',
       body: {
-        email: input.email.trim().toLowerCase(),
+        email,
         password: input.password,
         displayName: input.contactName,
+        accountKind: 'organisation',
+        organisation: { name: input.organisationName, sector: input.sector },
       },
     });
   } catch (cause) {
@@ -124,70 +112,63 @@ export async function POST(request: Request) {
     );
   }
 
+  const orgId = tokens.me?.orgId ?? tokens.me?.memberships?.find((m) => m.orgId)?.orgId ?? null;
+  if (!tokens.accessToken || !orgId) {
+    /*
+     * The account exists but the service did not say which organisation it
+     * made. Signing them in without one would open a wizard that cannot save,
+     * so they are sent to sign in — which reads `/me` afresh.
+     */
+    return NextResponse.json(
+      { error: 'Your account was created, but the organisation could not be confirmed. Sign in to continue.' },
+      { status: 502 },
+    );
+  }
+
   /*
-   * File the application before signing them in.
+   * What registration collected that the account itself has no field for.
    *
-   * Ordered deliberately. If the store is unwritable, the applicant must find
-   * out now — while they still have the form open and can be told to try again
-   * — not after a redirect to a page that would tell them everything is fine.
-   * The account already exists at this point, so re-registering with the same
-   * email answers 409 with "sign in instead", which is a recoverable position.
+   * Interests are what routing matches reports against, and the plan and
+   * expected volume price the subscription. `/auth/register` accepts only a name
+   * and sector, so they are written onto the organisation step, where the
+   * platform owner reads the application and where the wizard keeps them when
+   * that step is saved again.
+   *
+   * Not fatal: the account and organisation exist either way, and failing the
+   * registration here would tell somebody to register again with an email that
+   * is already taken.
    */
-  try {
-    await registerApplication({
-      accountEmail: input.email,
-      organisationName: input.organisationName,
+  await apiRequest('/org/onboarding/steps/organisation', {
+    method: 'PUT',
+    token: tokens.accessToken,
+    headers: { 'X-Dawuro-Org': orgId },
+    body: {
+      legalName: input.organisationName,
       sector: input.sector,
       contactName: input.contactName,
-      email: input.email.trim().toLowerCase(),
+      contactEmail: email,
       phone: input.phone,
       interests: input.interests ?? [],
       ...(input.tier ? { tier: input.tier } : {}),
       ...(input.expectedMonthlyDownloads !== undefined
         ? { expectedMonthlyDownloads: input.expectedMonthlyDownloads }
         : {}),
-      registeredAtIso: new Date().toISOString(),
-    });
-  } catch {
-    return NextResponse.json(
-      {
-        error:
-          'Your account was created, but the application could not be saved. Sign in and try again.',
-      },
-      { status: 500 },
-    );
-  }
+    },
+  }).catch(() => undefined);
 
   await createSession({
-    id: input.email.toLowerCase(),
-    email: input.email,
+    id: tokens.me?.userId ?? email,
+    email,
     displayName: input.contactName,
     /*
-     * A reporter account, because that is what the backend created.
-     *
-     * Claiming `organisation` here would put them in a console whose every page
-     * the server refuses, which is exactly the screen this route used to
-     * produce. `/onboarding` is where the position is explained.
+     * An organisation, because the service made one — pending, so middleware
+     * keeps them on `/onboarding` and every other `/org/*` route refuses them
+     * until the platform owner approves.
      */
-    accountType: 'reporter',
+    accountType: 'organisation',
+    businessId: orgId,
     businessName: input.organisationName,
     onboardingComplete: false,
-    /*
-     * Kept rather than discarded.
-     *
-     * Five of the nine fields this form collects — sector, phone, interests,
-     * tier and expected volume — were validated and then dropped on the floor,
-     * because nothing downstream could accept them. `interests` is the one that
-     * matters most: it is what routing matches a report against, so an
-     * organisation created without it would receive nothing.
-     */
-    pendingApplication: {
-      organisationName: input.organisationName,
-      sector: input.sector,
-      phone: input.phone,
-      interests: input.interests ?? [],
-      ...(input.tier ? { tier: input.tier } : {}),
-    },
     accessToken: tokens.accessToken,
     ...(tokens.refreshToken ? { refreshToken: tokens.refreshToken } : {}),
     ...(tokens.expiresAt ? { accessTokenExpiresAt: tokens.expiresAt } : {}),

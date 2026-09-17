@@ -1,6 +1,5 @@
 import { redirect } from 'next/navigation';
-import { NotWired } from '@/components/ui';
-import { ADMIN_ROLES, ROLE_META, roleCan, rolesWith, type ConsoleCapability } from '@dawuro/core';
+import { roleCan } from '@dawuro/core';
 import {
   Note,
   PageIntro,
@@ -10,23 +9,33 @@ import {
   StatGrid,
   Table,
 } from '@/components/admin/Widgets';
+import { Outage, load } from '@/components/ui';
 import { requireSession } from '@/lib/session';
+import { platform } from '@/lib/consoleApi';
+import { ADMIN_ROLE_COPY, normaliseAdmins } from '@/lib/admins';
 import { AdminManager, UnofferedRoles } from './AdminManager';
-
-/** The authorities worth showing as a grid — the ones that decide real power. */
-const MATRIX: { id: ConsoleCapability; label: string }[] = [
-  { id: 'manage_admins', label: 'Admins' },
-  { id: 'manage_keys', label: 'Keys' },
-  { id: 'override_routing', label: 'Routing' },
-  { id: 'approve_institutions', label: 'Approve' },
-  { id: 'run_screening', label: 'Screening' },
-  { id: 'run_payouts', label: 'Payouts' },
-  { id: 'view_audit_log', label: 'Audit' },
-];
 
 export default async function Page() {
   const session = await requireSession();
   if (!session.role || !roleCan(session.role, 'manage_admins')) redirect('/');
+
+  const result = await load(() => platform.admins<unknown>());
+
+  if (!result.ok) {
+    return (
+      <PageShell>
+        <PageIntro
+          title="Administrators"
+          blurb="Who runs the platform, and the only place a new one is created."
+        />
+        <Outage error={result.error} retryHref="/admin/administrators" />
+      </PageShell>
+    );
+  }
+
+  const { admins, roles } = normaliseAdmins(result.data);
+  const owners = admins.filter((a) => a.role === 'platform_owner' && !a.suspended).length;
+  const suspended = admins.filter((a) => a.suspended).length;
 
   return (
     <PageShell>
@@ -34,52 +43,39 @@ export default async function Page() {
         title="Administrators"
         blurb="Who runs the platform, and the only place a new one is created."
       />
-      <NotWired what="Creating or changing an administrator" />
 
       <Note>
-        <span className="font-semibold">You are the platform owner.</span> Every other administrator
-        exists because this account created them, and nothing else in the product can. That is
-        deliberate: an account that can grant any authority should be used rarely and deliberately,
-        never for day-to-day work.
+        <span className="font-semibold">You are a platform owner.</span> Every other administrator
+        exists because a platform owner created them, and nothing else in the product can. Use this
+        account rarely and deliberately, never for day-to-day work.
       </Note>
 
+      {/* Counted from the service's list. These were typed-in numbers — "9". */}
       <StatGrid>
-        <Stat label="Administrators" value="9" />
-        <Stat label="Roles available" value={String(ADMIN_ROLES.length)} />
+        <Stat label="Administrators" value={String(admins.length)} />
         <Stat
-          label="Can create admins"
-          value={String(rolesWith('manage_admins').length)}
-          hint="This role, alone"
+          label="Platform owners"
+          value={String(owners)}
+          tone={owners <= 1 ? 'warn' : 'neutral'}
+          hint={owners <= 1 ? 'Only one can restore access' : undefined}
         />
-        <Stat label="Read-only" value="1" hint="The auditor, structurally" />
+        <Stat label="Suspended" value={String(suspended)} />
+        <Stat label="Roles available" value={String(roles.length)} />
       </StatGrid>
 
-      <AdminManager actorName={session.displayName} />
+      <AdminManager admins={admins} roles={roles} selfEmail={session.email} />
 
-      <Panel
-        title="Who can do what"
-        subtitle="The authorities that matter, rather than every capability."
-      >
+      <Panel title="What each role is for" subtitle="The roles the service grants.">
         <Table
-          empty="No administrators yet. You add them here — nobody self-registers into an admin role."
-          columns={['Role', ...MATRIX.map((m) => m.label)]}
-          rows={ADMIN_ROLES.map((role) => [
+          columns={['Role', 'What it is for']}
+          rows={roles.map((role) => [
             <span key="r" className="whitespace-nowrap font-medium text-text-primary">
-              {ROLE_META[role].label}
+              {ADMIN_ROLE_COPY[role].label}
             </span>,
-            ...MATRIX.map((m) =>
-              roleCan(role, m.id) ? (
-                <span key={m.id} className="text-success" aria-label="yes">
-                  ●
-                </span>
-              ) : (
-                <span key={m.id} className="text-text-faint" aria-label="no">
-                  ·
-                </span>
-              ),
-            ),
+            <span key="d" className="text-xs leading-relaxed text-text-muted">
+              {ADMIN_ROLE_COPY[role].description}
+            </span>,
           ])}
-          align={MATRIX.map((_, i) => i + 1)}
         />
       </Panel>
 

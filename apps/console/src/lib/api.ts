@@ -18,6 +18,21 @@ const BASE = (process.env.DAWURO_API_URL ?? '').replace(/\/+$/, '');
 /** Whether the console is pointed at a backend at all. */
 export const isLiveBackend = BASE.length > 0;
 
+/**
+ * An absolute upstream URL for a versioned path.
+ *
+ * For the handful of routes whose answer is *not* JSON and so cannot go through
+ * `apiRequest` — an onboarding document downloaded for review is bytes, and
+ * buffering it here to hand it on would hold the whole file per request. Those
+ * routes fetch this URL themselves and stream the response.
+ *
+ * The origin stays server-side: `DAWURO_API_URL` is deliberately not a
+ * `NEXT_PUBLIC_` variable, and nothing returned here may be rendered into a page.
+ */
+export function upstreamUrl(path: string): string {
+  return `${BASE}/v1${path}`;
+}
+
 /*
  * Say which backend this process is talking to, once, at startup.
  *
@@ -39,6 +54,16 @@ if (process.env.NODE_ENV !== 'production') {
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
+  /**
+   * A body sent as bytes rather than as JSON.
+   *
+   * One endpoint needs it: the onboarding document upload, which takes the raw
+   * file on `PUT /org/onboarding/documents/{documentType}/bytes` and checks it
+   * against the `sha256` declared a moment earlier. Everything else this console
+   * sends is JSON, so this is deliberately narrow — when it is set, `body` is
+   * ignored and the caller supplies its own `Content-Type` through `headers`.
+   */
+  rawBody?: ArrayBuffer;
   /** The caller's backend token, taken from their server-side session. */
   token?: string;
   /** Requests that hang are worse than requests that fail. */
@@ -112,7 +137,8 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const changesState = method !== 'GET';
 
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    // Bytes carry their own type; the caller sets it through `headers`.
+    ...(options.rawBody === undefined ? { 'Content-Type': 'application/json' } : {}),
     Accept: 'application/json',
     /*
      * Dev tunnels answer an unrecognised client with an HTML interstitial
@@ -141,7 +167,11 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     response = await fetch(`${BASE}/v1${path}`, {
       method,
       headers,
-      ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+      ...(options.rawBody !== undefined
+        ? { body: options.rawBody }
+        : options.body !== undefined
+          ? { body: JSON.stringify(options.body) }
+          : {}),
       signal: controller.signal,
       // Console data is operational: a cached inbox is a wrong inbox.
       cache: 'no-store',

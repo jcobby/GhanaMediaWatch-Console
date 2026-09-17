@@ -101,8 +101,29 @@ test('the route refuses anybody without a session, and says nothing about why', 
 test('the signature is minted per request, not reused from the page', () => {
   // The whole point. A URL taken from the render is the bug.
   const route = code(ROUTE);
-  expect(route).toMatch(/freshMediaUrl\(incidentId, session\.accessToken\)/);
+  expect(route).toMatch(/freshMediaUrl\(incidentId, session\.accessToken, \{/);
   expect(route).toMatch(/export const dynamic = 'force-dynamic'/);
+});
+
+describe('the copies the service makes are used', () => {
+  test('a list asks for the thumb, and the route serves it', () => {
+    // A 3 MB original drawn into a 72px square is what made the desk slow.
+    expect(mediaHref('inc_1', 'thumb')).toBe('/api/media/inc_1?v=thumb');
+    expect(code(ROUTE)).toMatch(/requested === 'thumb' \|\| requested === 'view'/);
+    expect(read('lib/media.ts')).toMatch(/media\.thumbUrl \?\? media\.posterUrl \?\? photo/);
+  });
+
+  test('an organisation reads its report under its own scope', () => {
+    /*
+     * The lookup scanned `/org/inbox` without `X-Dawuro-Org`, which every
+     * `/org/*` route refuses — so no video ever resolved for an organisation.
+     */
+    const media = code('lib/media.ts');
+    expect(media).toMatch(/\/org\/incidents\/\$\{encodeURIComponent\(incidentId\)\}/);
+    expect(media).toMatch(/'X-Dawuro-Org': options\.orgId/);
+    expect(media).not.toMatch(/'\/org\/inbox'/);
+    expect(code(ROUTE)).toMatch(/orgId: session\.businessId \?\? null/);
+  });
 });
 
 test('the bytes are streamed rather than buffered', () => {
@@ -112,7 +133,8 @@ test('the bytes are streamed rather than buffered', () => {
    * queue of them.
    */
   const route = code(ROUTE);
-  expect(route).toMatch(/new NextResponse\(upstream\.body/);
+  expect(route).toMatch(/let body: ReadableStream<Uint8Array> = upstream\.body;/);
+  expect(route).toMatch(/new NextResponse\(body,/);
   expect(route).not.toMatch(/arrayBuffer\(\)|\.blob\(\)/);
 });
 
@@ -166,16 +188,39 @@ describe('what a browser will actually play', () => {
      */
     const route = code(ROUTE);
     expect(route).toMatch(/function browserPlayable/);
-    expect(route).toMatch(/'video\/quicktime' \|\| base === 'video\/x-quicktime' \? 'video\/mp4'/);
-    expect(route).toMatch(/'Content-Type': browserPlayable\(upstreamType\)/);
+    expect(route).toMatch(/base === 'video\/quicktime' \|\| base === 'video\/x-quicktime'/);
+    expect(route).toMatch(/return 'video\/mp4';/);
+    expect(route).toMatch(/let contentType = browserPlayable\(upstreamType\);/);
+    expect(route).toMatch(/'Content-Type': contentType/);
   });
 
   test('nothing else is relabelled', () => {
     // A blanket rewrite would tell the browser a JPEG is a video, and the
     // failure would be indistinguishable from the one being fixed.
     const route = code(ROUTE);
-    expect(route).toMatch(/: contentType;/);
+    expect(route).toMatch(/if \(!quicktime\) return contentType;/);
     expect(route).not.toMatch(/always|every type/i);
+  });
+
+  test('HEVC keeps its own label, because relabelling it helps nobody', () => {
+    /*
+     * The relabel is a correction for H.264 in a QuickTime container — an ISO
+     * base media file wearing the wrong name. It is not a correction for HEVC:
+     * no desktop browser can decode that however it is labelled, and calling it
+     * mp4 only moves the failure from "unsupported source", which a browser
+     * reports immediately and precisely, to a decode error several seconds
+     * later. Worse for the editor and worse for anybody diagnosing it.
+     *
+     * New captures no longer produce HEVC — the app asks iOS for `avc1`
+     * explicitly. This is for the clips already stored, which need transcoding
+     * on the server.
+     */
+    const route = code(ROUTE);
+    // The codec parameter is read out of the content type, and HEVC is
+    // returned untouched rather than renamed.
+    expect(route).toContain('codecs');
+    expect(route).toMatch(/startsWith\('hvc1'\)/);
+    expect(route).toMatch(/startsWith\('hev1'\)/);
   });
 
   test('the upstream content type is printed where somebody is looking', () => {
@@ -192,7 +237,7 @@ describe('telling the four failures apart', () => {
 
   test("the element's own error code is kept, not discarded", () => {
     const src = code(frame);
-    expect(src).toMatch(/setMediaError\(event\.currentTarget\.error\?\.code \?\? null\)/);
+    expect(src).toMatch(/const code = event\.currentTarget\.error\?\.code \?\? null;\s*setMediaError\(code\)/);
     expect(src).toMatch(/PLAYBACK_FAILURE\[mediaError \?\? 0\]/);
   });
 
@@ -218,6 +263,147 @@ describe('telling the four failures apart', () => {
      */
     const src = code(frame);
     expect(src).toMatch(/Open the file directly/);
-    expect(src).toMatch(/href=\{videoUrl\}/);
+    expect(src).toMatch(/href=\{playable\}/);
+  });
+
+  test('a photo that will not load says why, in the route own words', () => {
+    /*
+     * Reported as a photo showing "The file could not be opened" on a report
+     * the service had marked integrity passed. An `<img>` error carries no
+     * status and no code, so the frame had nothing to go on — and neither did
+     * anybody reading it. The frame now asks the route for one byte and shows
+     * the answer.
+     */
+    const src = code(frame);
+    expect(src).toMatch(/fetch\(src, \{ headers: \{ Range: 'bytes=0-15' \}/);
+    expect(src).toMatch(/onError=\{\(\) => \{\s*setFailed\(true\);\s*diagnose\(posterUrl\);/);
+    // Not under a size verdict, which already says what is wrong in words.
+    expect(src).toMatch(/\{serverSaid && !tooSmall \? \(/);
+    // And what the file actually is, since the label is what can be wrong.
+    expect(src).toMatch(/formatOf\(head\)/);
+  });
+
+  test('a photograph labelled as video is sent as a photograph', () => {
+    /*
+     * A photo report, stored and filed as `image/jpeg`, streamed from the
+     * service labelled as video — and a browser will not draw an `<img>` whose
+     * response says it is a video. The route reads the signature at the start of
+     * the file and names it correctly.
+     */
+    const route = code(ROUTE);
+    expect(route).toMatch(/head\[0\] === 0xff && head\[1\] === 0xd8 && head\[2\] === 0xff\) return 'image\/jpeg'/);
+    // Only from the start of the file, and only when the label is not already an image.
+    expect(route).toMatch(/const fromStart = !range \|\| \/\^bytes=0-\/\.test\(range\)/);
+    expect(route).toMatch(/!upstreamType\.toLowerCase\(\)\.startsWith\('image\/'\)/);
+    // The chunk read is handed back, not held.
+    expect(route).toMatch(/controller\.enqueue\(head\)/);
+    expect(route).toMatch(/'Content-Type': contentType/);
+  });
+
+  test('a failed answer is printed too, not only a successful one', () => {
+    // It printed after the failure exit, so the requests that mattered never appeared.
+    const route = code(ROUTE);
+    expect(route.indexOf('`  MEDIA ${upstream.status}')).toBeLessThan(
+      route.indexOf('if (!upstream.ok'),
+    );
+    expect(route).toMatch(/MEDIA lookup/);
+  });
+});
+
+describe('the preview opens on what the list is showing', () => {
+  /*
+   * Reported as a mismatch anybody would read as a bug: the queue headed TODAY,
+   * with **Date / Newest first** selected, and the pane beside it showing a
+   * report filed on the 4th.
+   *
+   * The default selection was `queue[0]` — the highest triage score — and
+   * triage counts waiting time, so the oldest report is by definition the most
+   * urgent. Arithmetically right, and the opposite of what somebody clicking
+   * "newest first" asked for.
+   */
+  const workbench = 'app/(editorial)/editorial/Workbench.tsx';
+
+  test('nothing is pre-selected by urgency', () => {
+    expect(code(workbench)).toMatch(/useState<string \| null>\(null\)/);
+  });
+
+  test('the default is the top of the list as displayed', () => {
+    // Whatever ordering is in force — urgency, newest, oldest, by subject.
+    const src = code(workbench);
+    expect(src).toMatch(/const firstShown = groups\[0\]\?\.items\[0\]\?\.incident \?\? null/);
+    expect(src).toMatch(/\?\? firstShown \?\? null/);
+  });
+
+  test('an editor who picked a report is not moved off it', () => {
+    /*
+     * Changing the grouping must rearrange the list around them, not take away
+     * what they were reading. An explicit choice wins over the default.
+     */
+    expect(code(workbench)).toMatch(
+      /selectedId \? reports\.find\(\(r\) => r\.id === selectedId\) : null/,
+    );
+  });
+
+  test('the stored assessment follows the report actually on screen', () => {
+    // Keyed off `selectedId` it would load nothing at all until somebody
+    // clicked, on the very first report an editor sees.
+    expect(code(workbench)).toMatch(/useStoredNewsValue\(selected\?\.id \?\? null\)/);
+  });
+});
+
+describe('a corroboration tick that does not take says so', () => {
+  /*
+   * Reported as "when I select under the corroboration, it unchecks".
+   *
+   * The tick is optimistic on purpose — the box moves at once and the request
+   * follows, because waiting for a round trip before showing the box ticked
+   * makes working through seven checks feel broken. If the request fails the
+   * box moves back, which is the honest version of optimism.
+   *
+   * What was missing is the other half. The explanation rendered in the
+   * decision panel, several hundred pixels below and off the screen on a full
+   * checklist — so an editor ticked a box, watched it silently untick itself,
+   * and had no way at all to find out why. A failure has to appear where the
+   * failure happened.
+   */
+  const workbench = 'app/(editorial)/editorial/Workbench.tsx';
+
+  test('the checklist has its own failure, not the decision panel one', () => {
+    const src = code(workbench);
+    expect(src).toMatch(/const \[checkError, setCheckError\]/);
+    expect(src).toMatch(/failure=\{checkError\}/);
+  });
+
+  test('it names the check that failed', () => {
+    // An editor working through seven of them needs to know which one.
+    expect(code(workbench)).toMatch(/CORROBORATION_CHECKS\.find\(\(c\) => c\.id === failure\.id\)/);
+  });
+
+  test('the service own words survive, with its status', () => {
+    /*
+     * "That check could not be recorded" alone tells an editor nothing they can
+     * act on, and the status is what separates a permission problem from a
+     * report that moved on underneath them.
+     */
+    const src = code(workbench);
+    expect(src).toMatch(/answer\.upstreamStatus \? ` \(\$\{answer\.upstreamStatus\}\)` : ''/);
+  });
+
+  test('a network failure lands in the same place', () => {
+    // Unreachable and refused are both "the tick did not take", and both belong
+    // beside the box rather than in two different parts of the screen.
+    const toggle = code(workbench);
+    const fn = toggle.slice(
+      toggle.indexOf('const toggleCheck'),
+      toggle.indexOf('return (', toggle.indexOf('const toggleCheck')),
+    );
+    expect(fn).toMatch(/could not reach its own server/);
+    expect(fn).not.toMatch(/setDecisionError\('The console could not reach/);
+  });
+
+  test('a fresh attempt clears the last failure', () => {
+    // A stale message beside a box that has since worked is its own bug.
+    const toggle = code(workbench);
+    expect(toggle).toMatch(/setCheckError\(null\);\s*\n\s*setDecisionError\(null\)/);
   });
 });

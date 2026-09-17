@@ -122,6 +122,13 @@ export {
 
 export {
   PLATFORM_FEE_RATE,
+  COMMISSION_BOUNDS,
+  DEFAULT_COMMISSION_RATES,
+  type CommissionRates,
+  type OrganisationOffer,
+  sanitiseCommissionRates,
+  sanitiseOffer,
+  bestOffer,
   type CommissionInput,
   type CommissionBreakdown,
   estimateCommission,

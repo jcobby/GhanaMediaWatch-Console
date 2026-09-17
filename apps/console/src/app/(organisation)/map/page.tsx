@@ -1,8 +1,10 @@
-import type { Incident } from '@dawuro/core';
+import { redirect } from 'next/navigation';
+import { roleCan, type Incident } from '@dawuro/core';
 import { load } from '@/components/ui';
 import { org } from '@/lib/consoleApi';
 import { PageHeader } from '@/components/shell';
 import { OrganisationOutage } from '@/components/OrganisationOutage';
+import { requireSession } from '@/lib/session';
 import { MapWorkspace } from './MapWorkspace';
 
 /**
@@ -14,6 +16,19 @@ import { MapWorkspace } from './MapWorkspace';
  * here would put invented geography behind a real decision.
  */
 export default async function Page() {
+  /*
+   * `view_inbox`, because this page *is* the inbox.
+   *
+   * It reads `org.inbox` and plots it. Gating the queue and leaving its own map
+   * open would hand the same reports to the same person through a different
+   * door — and in aggregate, which is arguably the more revealing view. The two
+   * must always carry the same capability; if one moves, move both.
+   *
+   * Only enforced when the account has a role: see the note on the inbox page.
+   */
+  const session = await requireSession();
+  if (session.role && !roleCan(session.role, 'view_inbox')) redirect('/');
+
   const result = await load(() => org.inbox<Incident>());
 
   return (

@@ -5,9 +5,9 @@ import {
   formatCedis,
   type AdminRole,
 } from '@dawuro/core';
+import Link from 'next/link';
 import type { AdminData } from '@/lib/consoleApi';
 import { Feed, Note, Panel, Pill, RoleIntro, Stat, StatGrid, Table } from './Widgets';
-import { RowAction, RowActions } from './RowAction';
 
 /**
  * A different dashboard per admin role.
@@ -325,10 +325,24 @@ function HrAdmin({ data }: { data: AdminData }) {
                   Unverified
                 </Pill>
               ),
-              <RowActions key="a">
-                <RowAction label="Accept" done="Accepted" tone="primary" />
-                <RowAction label="Decline" done="Declined" confirm="Decline this request?" />
-              </RowActions>,
+              /*
+                No decision here, deliberately.
+
+                These were simulated: a tick after a timer, and the platform told
+                nothing — on the decision that admits somebody to an organisation
+                and so decides who can see citizens' footage. The real control is
+                on the organisation's own Team screen, which sends it and shows
+                the service's answer. A second, weaker path to the same decision
+                is worse than one good path, and this was the more prominent of
+                the two.
+              */
+              <Link
+                key="a"
+                href="/team"
+                className="text-2xs font-medium text-accent hover:underline"
+              >
+                Decide on Team
+              </Link>,
             ])}
           align={[4]}
         />
@@ -594,20 +608,21 @@ function Compliance({ data }: { data: AdminData }) {
                 Hit
               </Pill>
             ),
-            <RowActions key="x">
-              {a.screeningRunAtIso === null ? (
-                <RowAction label="Run screening" done="Screening run" tone="primary" />
-              ) : a.screeningClear === false ? (
-                <RowAction
-                  label="Escalate"
-                  done="Escalated"
-                  tone="danger"
-                  confirm="Refer to the platform owner?"
-                />
-              ) : (
-                <RowAction label="Re-run" done="Re-run" />
-              )}
-            </RowActions>,
+            /*
+              Screening is run from the approvals desk, not from here.
+
+              "Run screening" settled into "Screening run" after a timer without
+              anything being screened — and the next reviewer would have read
+              that tick as a check somebody had actually done. Approvals runs it
+              against the service and gates approval on the result.
+            */
+            <Link
+              key="x"
+              href="/platform/approvals"
+              className="text-2xs font-medium text-accent hover:underline"
+            >
+              Review
+            </Link>,
           ])}
           align={[2, 4]}
         />

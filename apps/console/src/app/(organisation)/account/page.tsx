@@ -23,6 +23,17 @@ import { org } from '@/lib/consoleApi';
  * next month. Interests sit beside it: together those two explain both the bill
  * and why the inbox looks the way it does, which is the question an officer
  * actually arrives with.
+ *
+ * **Deliberately not capability-gated.** Everything here is the organisation
+ * describing itself to itself — its plan, its own spend, its branches, the
+ * categories it asked for — and none of it is another person's work or another
+ * organisation's data. Read-only, too: nothing on this page writes.
+ *
+ * `manage_subscriptions` would be the obvious gate and is the wrong one. That
+ * capability is the power to *change* what an organisation is billed; it is held
+ * by Finance Officer, and granting it to every role that needs to see the plan
+ * would widen it far past what this page does. If seeing the bill should be
+ * restricted, that wants its own capability rather than borrowing one.
  */
 export default async function Page() {
   const result = await load(async () => {
