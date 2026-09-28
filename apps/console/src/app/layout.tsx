@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
+import { ToastProvider } from '@/components/ui/Toast';
 
 /*
  * Inter matches the phone app, so the two products read as one system. The
@@ -29,7 +30,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`}>
-      <body className="min-h-screen bg-canvas text-text-primary antialiased">{children}</body>
+      <body className="min-h-screen bg-canvas text-text-primary antialiased">
+        {/* Mounted once. Every consequential action in this console used to
+            succeed in silence, which reads exactly like a click that missed. */}
+        <ToastProvider>{children}</ToastProvider>
+      </body>
     </html>
   );
 }

@@ -31,8 +31,19 @@ import {
  * Pure, and free of `server-only`, so the tests can feed it that payload.
  */
 
-/** A reviewable application: the wizard's shape plus the id the platform routes take. */
-export type ReviewableApplication = OnboardingApplication & { id: string };
+/**
+ * A reviewable application: the wizard's shape, the id the platform routes
+ * take, and the answers the applicant gave.
+ *
+ * `payloads` is part of it rather than a second argument because a reviewer
+ * deciding a step needs what was submitted in front of them. Passing only the
+ * application is what produced a review panel that could say a step had been
+ * *sent* and nothing about what it said.
+ */
+export type ReviewableApplication = OnboardingApplication & {
+  id: string;
+  payloads?: OnboardingView['payloads'];
+};
 
 export interface OnboardingView {
   application: ReviewableApplication;

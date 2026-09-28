@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatRelativeTime } from '@dawuro/core';
-import { Button } from '@/components/ui';
+import { Button, useToast } from '@/components/ui';
 import { Pill, Table } from '@/components/admin/Widgets';
 import {
   ADVANCE_LABEL,
@@ -24,6 +24,7 @@ import {
  */
 export function AssignmentsBoard({ assignments }: { assignments: Assignment[] }) {
   const router = useRouter();
+  const toast = useToast();
   const [rows, setRows] = useState(assignments);
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ id: string; message: string } | null>(null);
@@ -65,6 +66,14 @@ export function AssignmentsBoard({ assignments }: { assignments: Assignment[] })
               }
             : row,
         ),
+      );
+      /*
+       * Said out loud, because the only other evidence is a pill changing one
+       * word in a table row the operator may not be looking at.
+       */
+      toast.success(
+        `${assignment.assigneeName} — ${ASSIGNMENT_LABEL[status]}`,
+        status === 'closed' ? 'The dispatch is closed.' : 'The dispatch has moved on.',
       );
       setClosing(null);
       setNote('');

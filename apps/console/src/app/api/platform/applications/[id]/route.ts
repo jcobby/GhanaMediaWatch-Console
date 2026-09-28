@@ -30,7 +30,7 @@ const schema = z.discriminatedUnion('decision', [
     status: z.enum(['approved', 'rejected']),
     note: z.string().trim().optional(),
   }),
-  z.object({ decision: z.literal('screening') }),
+  z.object({ decision: z.literal('screening'), clear: z.boolean() }),
 ]);
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -92,16 +92,29 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
        */
       await platform.reject(id, input.note);
     } else if (input.decision === 'screening') {
-      await platform.screen(id);
+      await platform.screen(id, input.clear);
     } else {
       /*
-       * The decide body is undocumented. Both spellings are sent — `accepted`
-       * is the service's likeliest word, `status` the console's — and the
-       * service's own error is shown if it wants something else.
+       * `approved` / `rejected`, and one key rather than two.
+       *
+       * The decide body is undocumented — `additionalProperties: true` with
+       * nothing declared — so this was sending both spellings at once:
+       * `decision: 'accepted'` alongside `status: 'approved'`. The service
+       * refused it with "Request validation failed", which is what a reviewer
+       * saw instead of a decision being recorded.
+       *
+       * Two things were likely wrong with that guess. `accepted` is not the
+       * word this service uses anywhere else — `/org/membership-requests/{id}/decide`
+       * takes `approved` | `rejected` — and sending a second, unexpected key
+       * alongside it gives a strict validator a second thing to object to.
+       * This sends the vocabulary the rest of the API uses, and nothing more.
+       *
+       * If it is still wrong, the error now names the offending field: the
+       * service's `details.issues` are carried through to the reviewer rather
+       * than collapsed to the word "issues".
        */
       await platform.decideStep(id, input.stepId, {
-        decision: input.status === 'approved' ? 'accepted' : 'rejected',
-        status: input.status,
+        decision: input.status,
         ...(input.note ? { note: input.note } : {}),
       });
     }

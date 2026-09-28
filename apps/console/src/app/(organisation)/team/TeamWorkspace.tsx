@@ -24,7 +24,7 @@ import type {
   ShiftStatus,
 } from '@dawuro/core';
 import { formatRelativeTime } from '@dawuro/core';
-import { Badge, Button, Panel } from '@/components/ui';
+import { Badge, Button, Panel, useToast } from '@/components/ui';
 import { InvitePanel } from '@/components/InvitePanel';
 import { AffiliationPanel } from '@/components/AffiliationPanel';
 import { cn } from '@/lib/cn';
@@ -76,6 +76,7 @@ export function TeamWorkspace({
   businessId: string;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [tab, setTab] = useState<Tab>('staff');
   const [query, setQuery] = useState('');
   const [decided, setDecided] = useState<Record<string, 'accepted' | 'rejected'>>({});
@@ -148,6 +149,14 @@ export function TeamWorkspace({
       }
       // Only now: the queue is the service's, and this row has left it.
       setDecided((prev) => ({ ...prev, [request.id]: outcome }));
+      toast.success(
+        outcome === 'accepted'
+          ? `${request.displayName} joined your team`
+          : `${request.displayName} turned down`,
+        outcome === 'accepted'
+          ? 'They can sign in and see your reports.'
+          : 'They have not been given access.',
+      );
       router.refresh();
     } catch {
       setFailure('The console could not reach its own server. Nothing was decided.');

@@ -207,7 +207,7 @@ export const ROLE_META: Record<PlatformRole, RoleMeta> = {
       'view_invoices',
     ],
     home: '/admin',
-    hue: '#5B3DF5',
+    hue: '#0B5FD1',
     icon: 'shield',
   },
   dawuro_admin: {
@@ -361,7 +361,7 @@ export const ROLE_META: Record<PlatformRole, RoleMeta> = {
       'assign_incidents',
     ],
     home: '/inbox',
-    hue: '#5B3DF5',
+    hue: '#0B5FD1',
     icon: 'building2',
   },
   editorial_lead: {

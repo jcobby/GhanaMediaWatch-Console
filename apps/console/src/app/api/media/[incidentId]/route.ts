@@ -57,9 +57,17 @@ export async function GET(request: Request, context: { params: Promise<{ inciden
   const requested = new URL(request.url).searchParams.get('v');
   const variant = requested === 'thumb' || requested === 'view' ? requested : 'default';
 
-  let url: string | null;
+  /*
+   * In development the 404 body carries the reason; in production it never
+   * does. Which endpoint refused, and what a media record actually held, is
+   * exactly what an operator needs and exactly what an unauthenticated caller
+   * must not be told — the note names paths and report state.
+   */
+  const dev = process.env.NODE_ENV !== 'production';
+
+  let lookup: { url: string | null; note: string | null };
   try {
-    url = await freshMediaUrl(incidentId, session.accessToken, {
+    lookup = await freshMediaUrl(incidentId, session.accessToken, {
       variant,
       // An organisation's own reports are read under its scope header.
       orgId: session.businessId ?? null,
@@ -72,20 +80,41 @@ export async function GET(request: Request, context: { params: Promise<{ inciden
      */
     const status = cause instanceof ApiUnavailable ? cause.status : 502;
     // The client is told 404 for a refusal; whoever runs the console sees the truth.
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`  MEDIA lookup failed ${incidentId} ${status}`);
-    }
+    if (dev) console.log(`  MEDIA lookup failed ${incidentId} ${status}`);
+    const refused = status === 403 || status === 404;
     return NextResponse.json(
-      { error: status === 403 || status === 404 ? 'Not found.' : 'The service did not answer.' },
+      {
+        error: refused
+          ? dev
+            ? `No endpoint would serve this report (the service answered ${status}).`
+            : 'Not found.'
+          : 'The service did not answer.',
+      },
       { status: status === 403 ? 404 : status },
     );
   }
 
+  const url = lookup.url;
+
   if (!url) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`  MEDIA lookup found no media url ${incidentId}`);
-    }
-    return NextResponse.json({ error: 'Not found.' }, { status: 404 });
+    /*
+     * Read, but holding nothing to serve.
+     *
+     * The commonest cause by far, and the one that used to be invisible: a
+     * video whose still copies were never made, asked for as `?v=view`. Every
+     * `posterUrl`, `thumbUrl` and `viewUrl` on this service is null for video,
+     * so a screen asking for a large still of a clip gets a 404 that says
+     * "Not found" about a report whose footage is right there.
+     */
+    if (dev) console.log(`  MEDIA no ${variant} url ${incidentId} — ${lookup.note ?? 'no detail'}`);
+    return NextResponse.json(
+      {
+        error: dev
+          ? `The report was readable but has no "${variant}" copy — ${lookup.note ?? 'no detail'}.`
+          : 'Not found.',
+      },
+      { status: 404 },
+    );
   }
 
   const range = request.headers.get('range');

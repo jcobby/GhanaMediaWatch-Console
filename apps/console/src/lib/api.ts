@@ -200,16 +200,100 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   if (!response.ok) {
     const envelope =
       parsed && typeof parsed === 'object' && 'error' in parsed
-        ? (parsed as { error: { code?: string; message?: string } }).error
+        ? (parsed as {
+            error: { code?: string; message?: string; details?: Record<string, unknown> };
+          }).error
         : null;
+
+    /*
+     * The `details` are carried through, not dropped.
+     *
+     * Several of this service's write endpoints publish no request body at all —
+     * the application step decide and the membership decide are both
+     * `additionalProperties: true` with nothing declared — so the console sends
+     * its best reading of the shape and the service's own error is the only
+     * specification available. Until now that error arrived as the bare
+     * sentence "Request validation failed.", which says a field is wrong and
+     * not which one, and a reviewer was left with a button that simply did not
+     * work.
+     *
+     * `details` is where this service names the offending field. Appending it
+     * is the difference between an undocumented endpoint being guessable and
+     * being a wall.
+     */
+    const detail = describeDetails(envelope?.details);
+
     throw new ApiUnavailable(
       (envelope?.code as ApiErrorCode) ?? 'UNREACHABLE',
       response.status,
-      envelope?.message ?? `Request failed with status ${response.status}.`,
+      [envelope?.message ?? `Request failed with status ${response.status}.`, detail]
+        .filter(Boolean)
+        .join(' '),
     );
   }
 
   return parsed as T;
+}
+
+/**
+ * A validation failure's `details`, as a sentence a reviewer can act on.
+ *
+ * The service returns an object — `{"check":"org_header"}`, or a map of field
+ * name to complaint. Rendered as JSON it is noise; named as `field: reason`
+ * pairs it tells whoever is stuck exactly which key the endpoint refused.
+ *
+ * Empty details produce an empty string, so the caller's `.filter(Boolean)`
+ * leaves the message alone.
+ */
+function describeDetails(details: unknown): string {
+  const said = say(details);
+  return said ? `(${said})` : '';
+
+  /**
+   * One value, as words.
+   *
+   * Recursive because the interesting part is nested. The service's validation
+   * failures arrive as `{"issues":[{"path":["status"],"message":"Invalid enum
+   * value"}]}`, and a formatter that only understood strings printed the word
+   * `issues` — the one part of that carrying no information. The reviewer saw
+   * "Request validation failed. (issues)" and was no better off than before.
+   *
+   * Depth-limited: an error body is not a document, and a cycle in one would
+   * otherwise hang the request that was already failing.
+   */
+  function say(value: unknown, depth = 0): string {
+    if (depth > 3) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) {
+      return value
+        .map((v) => say(v, depth + 1))
+        .filter(Boolean)
+        .join(', ');
+    }
+    if (!value || typeof value !== 'object') return '';
+
+    const row = value as Record<string, unknown>;
+
+    /*
+     * A zod-shaped issue reads best as `field: complaint`. Recognised by shape
+     * rather than by endpoint, because every write route on this service that
+     * rejects a body rejects it this way.
+     */
+    if ('message' in row || 'path' in row) {
+      const where = Array.isArray(row.path) ? row.path.filter(Boolean).join('.') : say(row.path, depth + 1);
+      const what = say(row.message, depth + 1) || say(row.code, depth + 1);
+      return [where, what].filter(Boolean).join(': ');
+    }
+
+    return Object.entries(row)
+      .map(([key, v]) => {
+        const inner = say(v, depth + 1);
+        return inner ? `${key}: ${inner}` : '';
+      })
+      .filter(Boolean)
+      .join('; ');
+  }
 }
 
 /**

@@ -23,7 +23,24 @@ export default async function Page() {
      */
     const inOnboarding = all
       .filter((row) => typeof row.reference === 'string' && !row.approvedAtIso)
-      .map((row) => normaliseOnboarding(row).application)
+      /*
+       * The answers travel with the application, not just its status.
+       *
+       * This took `.application` and dropped `.payloads` on the floor — which is
+       * everything the applicant actually typed. The review panel could then
+       * only report that a step had been *sent*, so "What they submitted" read
+       * "Sent 9m" and nothing else, and a platform owner was asked to approve
+       * an organisation's legal name, registration number and authorised officer
+       * while being shown none of the three.
+       *
+       * It is also why no organisation name appeared anywhere: the service sends
+       * none at the top level, and the legal name is in the organisation step's
+       * payload.
+       */
+      .map((row) => {
+        const { application, payloads } = normaliseOnboarding(row);
+        return { ...application, payloads };
+      })
       // Submitted first: those are waiting on a person. Drafts are still being typed.
       .sort((a, b) => Number(Boolean(b.submittedAtIso)) - Number(Boolean(a.submittedAtIso)));
 

@@ -32,10 +32,14 @@
     --color-text-faint: 122 127 148;
     --color-text-on-dark: 255 255 255;
 
-    --color-accent: 91 61 245;
-    --color-accent-alt: 37 99 235;
-    --color-accent-bright: 124 92 255;
-    --color-accent-wash: 237 233 254;
+    /* Accent — blue to blue, matching the phone. It was violet-to-blue, which
+       made the two products look like two products. Both stops carry a white
+       label at 4.5:1 or better, so `text-text-on-dark` on the primary button is
+       a real contrast rather than a hope. */
+    --color-accent: 11 95 209;
+    --color-accent-alt: 47 107 240;
+    --color-accent-bright: 78 139 255;
+    --color-accent-wash: 224 233 254;
 
     --color-success: 11 122 75;
     --color-success-wash: 219 244 232;

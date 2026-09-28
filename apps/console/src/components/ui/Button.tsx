@@ -15,7 +15,9 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const VARIANT: Record<Variant, string> = {
-  // The signature violet-to-blue gradient, identical to the phone's.
+  // The signature blue gradient, identical to the phone's, with a white label
+  // on it. It was violet-to-blue in both places and moved to blue together —
+  // these two tokens are hand-synced with the app's `global.css`.
   primary:
     'bg-gradient-to-br from-accent to-accent-alt text-text-on-dark shadow-sm hover:brightness-110 active:brightness-95',
   secondary:

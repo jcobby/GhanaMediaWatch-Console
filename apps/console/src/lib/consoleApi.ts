@@ -808,8 +808,17 @@ export const platform = {
       'POST',
       body,
     ),
-  screen: <T>(id: string) =>
-    send<T>(`/platform/applications/${encodeURIComponent(id)}/screening`, 'POST', {}),
+  /*
+   * Recording the outcome of a screening, not asking the service to run one.
+   *
+   * `clear` is required — the service answered "Request validation failed.
+   * (issues: clear: Required)" to the empty body this used to send, which is
+   * the whole reason the screening step could never be completed. Sanctions and
+   * adverse-media checks happen outside this console; what belongs here is the
+   * administrator's finding.
+   */
+  screen: <T>(id: string, clear: boolean) =>
+    send<T>(`/platform/applications/${encodeURIComponent(id)}/screening`, 'POST', { clear }),
   // Releasing money. Keyed on the batch so a retry cannot pay twice.
   createPayoutBatch: <T>(body: unknown, key: string) =>
     send<T>('/platform/payouts/batches', 'POST', body, `payout-batch:${key}`),

@@ -13,7 +13,7 @@ import {
   type Incident,
   type NewsSection,
 } from '@dawuro/core';
-import { Badge, Button, Panel } from '@/components/ui';
+import { Badge, Button, Panel, useToast } from '@/components/ui';
 import { MediaFrame } from '@/components/MediaFrame';
 import { mediaHref } from '@/lib/mediaHref';
 import { cn } from '@/lib/cn';
@@ -82,6 +82,7 @@ function RequestCard({ row, onDecided }: { row: RequestRow; onDecided: () => voi
   const [expiry, setExpiry] = useState<LeadExpiry>('24');
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState('');
+  const toast = useToast();
   const [busy, setBusy] = useState<'approve' | 'decline' | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -110,6 +111,19 @@ function RequestCard({ row, onDecided }: { row: RequestRow; onDecided: () => voi
       if (!res.ok) {
         setFailure(answer?.error ?? `That could not be sent — the service answered ${res.status}.`);
         return;
+      }
+      /*
+       * The card disappears either way, which on its own says only that
+       * *something* happened. Which desk it went to, and whether it leads, are
+       * decisions the editor just made and should hear back.
+       */
+      if (decision === 'approve') {
+        toast.success(
+          `Published to ${NEWS_SECTION_LABEL[section]}`,
+          lead ? 'Set as a top story on the homepage.' : `${organisation} has been told.`,
+        );
+      } else {
+        toast.success('Request declined', `${organisation} has been told why.`);
       }
       onDecided();
     } catch {

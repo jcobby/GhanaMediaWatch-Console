@@ -214,15 +214,46 @@ test('the page reads the service application and normalises it', () => {
 test('review decisions reach the service', () => {
   const route = code('app/api/platform/applications/[id]/route.ts');
   expect(route).toMatch(/platform\.approve\(id\)/);
-  expect(route).toMatch(/platform\.screen\(id\)/);
+  /*
+   * The screening carries the administrator's finding.
+   *
+   * It sent an empty body, on the assumption that the service ran the check.
+   * It does not — `clear` is required, and the service answered "Request
+   * validation failed. (issues: clear: Required)" every time, so no application
+   * could ever reach approval.
+   */
+  expect(route).toMatch(/platform\.screen\(id, input\.clear\)/);
+  expect(route).toMatch(/decision: z\.literal\('screening'\), clear: z\.boolean\(\)/);
   expect(route).toMatch(/platform\.decideStep\(id, input\.stepId/);
   expect(route).toMatch(/accountType !== 'platform_owner'/);
   expect(route).toMatch(/note: z\.string\(\)\.trim\(\)\.min\(1/);
 
   const review = code('components/ApplicationReview.tsx');
   expect(review).toMatch(/fetch\(`\/api\/platform\/applications\/\$\{encodeURIComponent\(application\.id\)\}`/);
-  // Screening is never marked clear in the browser.
+  // Screening is never marked clear in the browser: the reviewer says so, and
+  // the service records it. Nothing here assumes the answer.
   expect(review).not.toMatch(/screeningClear: true/);
+  expect(review).toMatch(/decision: 'screening', clear: true/);
+  expect(review).toMatch(/decision: 'screening', clear: false/);
+});
+
+test('a reviewer can clear every outstanding step at once, and is moved along', () => {
+  /*
+   * Three steps read on one screen still took three clicks and two tab changes
+   * to record. Approving one now moves to the next unreviewed step, and
+   * "Approve all" clears the rest in one action.
+   *
+   * It stops on the first refusal: these decide who may license the public's
+   * footage, and a partial result the reviewer cannot see is worse than a stop
+   * with the service's own reason on screen. It also never approves the
+   * organisation itself — that still needs screening and its own button.
+   */
+  const review = code('components/ApplicationReview.tsx');
+  expect(review).toMatch(/const approveOutstanding = async \(\) => \{/);
+  expect(review).toMatch(/if \(!sent\) return;/);
+  expect(review).not.toMatch(/approveOutstanding[\s\S]{0,400}decision: 'approved'/);
+  // Approving advances; sending back stays put, so the reason stays visible.
+  expect(review).toMatch(/if \(status === 'approved'\) \{/);
 });
 
 test('a whole application can be declined, with a reason', () => {

@@ -182,7 +182,20 @@ describe('what the rewrite had to keep', () => {
 
   test('licensing still only ticks after the service confirms', () => {
     const src = workspace();
-    const fn = src.slice(src.indexOf('const license = useCallback'), src.indexOf('const [filters'));
+    /*
+     * Bounded by the function's own start, not by whatever declaration happens
+     * to follow it. This sliced to `const [filters`, which sat directly after
+     * `license` until the callback moved below the state it now reads — and a
+     * backwards slice is empty, so the assertion compared -1 with -1 and the
+     * rule it was written for stopped being checked at all.
+     *
+     * Both markers occur only inside `license`, so the tail of the file is a
+     * safe boundary. They are asserted present first: `toBeLessThan` on two
+     * missing markers passes just as quietly.
+     */
+    const fn = src.slice(src.indexOf('const license = useCallback'));
+    expect(fn).toContain('if (!response.ok)');
+    expect(fn).toContain('setLicensed((prev)');
     expect(fn.indexOf('if (!response.ok)')).toBeLessThan(fn.indexOf('setLicensed((prev)'));
   });
 

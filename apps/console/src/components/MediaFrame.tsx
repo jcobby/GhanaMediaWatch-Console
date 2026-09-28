@@ -89,10 +89,17 @@ export function MediaFrame({
   className,
 }: {
   /**
-   * A still image. Frequently empty — the service generates no poster frame for
-   * video — in which case `videoUrl` is the only thing there is to show.
+   * A still image, where one exists.
+   *
+   * **Optional, because for video on this service one never does.** Every
+   * `posterUrl`, `thumbUrl` and `viewUrl` comes back null for a clip, so a
+   * caller asking the media route for a still of a video gets a 404 every
+   * time — a failing request per report, in the network tab of the screen
+   * whose footage is under suspicion, pointing at the wrong thing. Omitted,
+   * the player shows its own first frame, which is what it was going to show
+   * anyway.
    */
-  posterUrl: string;
+  posterUrl?: string;
   /**
    * The footage itself, played in place.
    *
@@ -309,26 +316,38 @@ export function MediaFrame({
           ) : null}
         </div>
       ) : null}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={posterUrl}
-        alt=""
-        aria-hidden
-        className={cn(
-          'absolute inset-0 h-full w-full scale-110 object-cover opacity-45 blur-2xl',
-          (failed || tooSmall) && 'hidden',
-        )}
-      />
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={posterUrl}
-        alt={alt}
-        onError={() => {
-          setFailed(true);
-          diagnose(posterUrl);
-        }}
-        className={cn('relative mx-auto h-full object-contain', (failed || tooSmall) && 'hidden')}
-      />
+      {/*
+        Nothing at all when there is no still to draw. An <img> with no src is
+        not an empty frame — browsers resolve it against the current document
+        and fetch the page itself.
+      */}
+      {posterUrl ? (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={posterUrl}
+            alt=""
+            aria-hidden
+            className={cn(
+              'absolute inset-0 h-full w-full scale-110 object-cover opacity-45 blur-2xl',
+              (failed || tooSmall) && 'hidden',
+            )}
+          />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={posterUrl}
+            alt={alt}
+            onError={() => {
+              setFailed(true);
+              diagnose(posterUrl);
+            }}
+            className={cn(
+              'relative mx-auto h-full object-contain',
+              (failed || tooSmall) && 'hidden',
+            )}
+          />
+        </>
+      ) : null}
 
       {isVideo && !failed && !tooSmall ? (
         <div className="absolute inset-0 flex items-center justify-center">

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Check, Loader2 } from 'lucide-react';
+import { useToast } from '@/components/ui';
 import { cn } from '@/lib/cn';
 
 /**
@@ -27,6 +28,7 @@ export function TakedownDecision({
   published: boolean;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [open, setOpen] = useState<'accepted' | 'rejected' | null>(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -64,6 +66,12 @@ export function TakedownDecision({
         return;
       }
       setDone(open);
+      toast.success(
+        open === 'accepted' ? 'Takedown upheld' : 'Takedown refused',
+        open === 'accepted'
+          ? 'The report has been withdrawn and the decision recorded.'
+          : 'The report stays up. Your reason is on the record.',
+      );
       setOpen(null);
       setNote('');
       router.refresh();

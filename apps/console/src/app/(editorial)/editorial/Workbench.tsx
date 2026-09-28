@@ -757,8 +757,18 @@ export function Workbench({
                     frame does not need. Older reports without copies fall back
                     to the photo on the service's side.
                   */
-                  posterUrl={mediaHref(selected.id, 'view')}
-                  {...(selected.media.kind === 'video' ? { videoUrl: mediaHref(selected.id) } : {})}
+                  {...(selected.media.kind === 'video'
+                    ? /*
+                        No still, and no request for one. This service stores
+                        `posterUrl`, `thumbUrl` and `viewUrl` as null for every
+                        clip it holds, so `?v=view` on a video was a guaranteed
+                        404 — one per report, in the network tab of the very
+                        screen where somebody is trying to work out why the
+                        footage will not play. The player draws its own first
+                        frame, which is what it did anyway.
+                      */
+                      { videoUrl: mediaHref(selected.id) }
+                    : { posterUrl: mediaHref(selected.id, 'view') })}
                   alt={selected.description}
                   when={formatExactCapture(selected.capturedAtIso, selected.capturedAtPrecision)}
                   /*

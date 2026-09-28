@@ -14,7 +14,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { PLATFORM_FEE_RATE, formatCedis, formatRelativeTime } from '@dawuro/core';
-import { Badge, Button, Panel } from '@/components/ui';
+import { Badge, Button, Panel, useToast } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import {
   needsAttention,
@@ -83,6 +83,7 @@ export function PayoutsWorkspace({
   embedded?: boolean;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [runs, setRuns] = useState(initial);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -123,6 +124,26 @@ export function PayoutsWorkspace({
         prev.some((r) => r.id === run.id) ? prev.map((r) => (r.id === run.id ? run : r)) : [run, ...prev],
       );
       if (needsAttention(run) > 0) setExpanded((prev) => new Set(prev).add(run.id));
+      /*
+       * This screen sends money. A release that says nothing is the one silence
+       * an operator will resolve by pressing the button again.
+       */
+      const failed = needsAttention(run);
+      if (key.startsWith('release:')) {
+        toast.success(
+          `${formatCedis(run.totalPesewas)} released`,
+          failed > 0
+            ? `${failed} payment${failed === 1 ? '' : 's'} need attention.`
+            : `${run.payments.length} reporter${run.payments.length === 1 ? '' : 's'} paid.`,
+        );
+      } else if (key === 'create') {
+        toast.success(
+          'Batch opened',
+          `${formatCedis(run.totalPesewas)} across ${run.payments.length} payment${run.payments.length === 1 ? '' : 's'}.`,
+        );
+      } else if (key.startsWith('retry:')) {
+        toast.success('Payment retried', failed > 0 ? `${failed} still need attention.` : 'It went through.');
+      }
       setConfirming(null);
       router.refresh();
     } catch {

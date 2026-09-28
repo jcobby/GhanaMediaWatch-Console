@@ -13,7 +13,7 @@ import {
   type OrganisationAccount,
   type Incident,
 } from '@dawuro/core';
-import { Badge, Button, Panel } from '@/components/ui';
+import { Badge, Button, Panel, useToast } from '@/components/ui';
 import { MediaFrame } from '@/components/MediaFrame';
 import { mediaHref } from '@/lib/mediaHref';
 
@@ -38,6 +38,7 @@ export function PublishedWorkspace({
   organisation: OrganisationAccount;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [withdrawn, setWithdrawn] = useState<Set<string>>(new Set());
   const [withdrawing, setWithdrawing] = useState<string | null>(null);
   const [reason, setReason] = useState('');
@@ -69,6 +70,7 @@ export function PublishedWorkspace({
         return;
       }
       setWithdrawn((prev) => new Set(prev).add(incidentId));
+      toast.success('Withdrawn from the feed', 'It is no longer public. Your licence stands.');
       setWithdrawing(null);
       setReason('');
       router.refresh();

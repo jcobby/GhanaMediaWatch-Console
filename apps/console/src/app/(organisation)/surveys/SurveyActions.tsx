@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { BarChart3, Square } from 'lucide-react';
-import { Button } from '@/components/ui';
+import { Button, useToast } from '@/components/ui';
 import type { SurveyResults } from '@/lib/surveys';
 
 /**
@@ -16,6 +16,7 @@ import type { SurveyResults } from '@/lib/surveys';
  */
 export function SurveyActions({ surveyId, accepting }: { surveyId: string; accepting: boolean }) {
   const router = useRouter();
+  const toast = useToast();
   const [results, setResults] = useState<SurveyResults | null>(null);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -67,6 +68,7 @@ export function SurveyActions({ surveyId, accepting }: { surveyId: string; accep
         return;
       }
       setClosed(true);
+      toast.success('Survey closed', 'No further responses will be accepted.');
       setConfirmClose(false);
       router.refresh();
     } catch {

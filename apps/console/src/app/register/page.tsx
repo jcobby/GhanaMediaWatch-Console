@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { ArrowRight, Building2, UserPlus } from 'lucide-react';
-import { GnaLogo } from '@/components/Brand';
+import { GnaSymbol } from '@/components/Brand';
 
 export const metadata = {
   title: 'Register — Dawuro',
@@ -22,7 +22,7 @@ export default function RegisterChoice() {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col justify-center px-6 py-12">
       <header className="mb-8 text-center">
-        <GnaLogo className="mx-auto mb-6 h-28 w-auto" />
+        <GnaSymbol className="mx-auto mb-6 h-20 w-auto" />
         <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
           How are you joining Dawuro?
         </h1>
@@ -44,7 +44,7 @@ export default function RegisterChoice() {
             'Then onboarding — registration documents, an authorised officer, the areas you cover',
             'A platform administrator verifies you before any footage arrives',
           ]}
-          accent="#5B3DF5"
+          accent="#0B5FD1"
         />
 
         <Choice

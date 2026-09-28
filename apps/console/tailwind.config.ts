@@ -70,7 +70,7 @@ const config: Config = {
         sm: '0 1px 2px rgba(14,16,36,0.06), 0 2px 8px rgba(14,16,36,0.04)',
         md: '0 2px 4px rgba(14,16,36,0.06), 0 8px 24px rgba(14,16,36,0.08)',
         lg: '0 4px 8px rgba(14,16,36,0.08), 0 16px 40px rgba(14,16,36,0.12)',
-        focus: '0 0 0 3px rgba(91,61,245,0.28)',
+        focus: '0 0 0 3px rgba(11,95,209,0.28)',
       },
       fontFamily: {
         sans: ['var(--font-sans)', 'system-ui', 'sans-serif'],

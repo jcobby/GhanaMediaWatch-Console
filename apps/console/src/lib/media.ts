@@ -70,7 +70,23 @@ function urlFor(media: MediaRecord, variant: MediaVariant): string | null {
   const photo = media.kind === 'photo' ? (media.url ?? null) : null;
   if (variant === 'thumb') return media.thumbUrl ?? media.posterUrl ?? photo;
   if (variant === 'view') return media.viewUrl ?? media.posterUrl ?? photo;
-  return media.url ?? null;
+  /*
+   * The playable media, and `url` is not the only place it lives.
+   *
+   * `PublicMedia.url` is the service's own preference — "the H.264 faststart
+   * web copy once ready" — and it is nullable. It is null while the derivative
+   * pipeline is still running, and it stays null when that pipeline failed.
+   * This read `media.url` alone, so either case answered 404 about footage that
+   * is sitting on the server: the frame said "the report is intact and the
+   * footage is on the server" and the route underneath it said Not found.
+   *
+   * `playbackUrl` is the same web copy under its own key, and `originalUrl` is
+   * the untouched bytes the reporter filed. The original is the last resort
+   * rather than the first because it may be QuickTime or HEVC — but an editor
+   * being handed the original and told by the player which codec it is beats
+   * being told the file does not exist.
+   */
+  return media.url ?? media.playbackUrl ?? media.originalUrl ?? null;
 }
 
 /**
@@ -97,22 +113,39 @@ function mediaOf(detail: IncidentEnvelope | null | undefined): MediaRecord | nul
  * Throws only when the service itself failed. A 403 or 404 from every endpoint
  * is an answer — this account may not see this report — and is reported as
  * null so the route can turn it into one status rather than leaking which.
+ *
+ * **`note` is for whoever is running the console, never for the browser.** A
+ * miss has three quite different causes — nobody would serve this report, the
+ * report was readable but holds no media at all, or it holds media with no URL
+ * for the copy that was asked for — and all three answered the same flat
+ * `404: Not found`. That is the same sin the rest of this route was written to
+ * undo: one sentence for four problems, and no way to tell them apart from the
+ * outside. The route keeps answering 404 to the client and prints this.
  */
+export interface MediaLookup {
+  url: string | null;
+  note: string | null;
+}
+
 export async function freshMediaUrl(
   incidentId: string,
   token: string,
   options: { variant?: MediaVariant; orgId?: string | null } = {},
-): Promise<string | null> {
+): Promise<MediaLookup> {
   const variant = options.variant ?? 'default';
   let lastFailure: unknown = null;
+  /** What each endpoint had to say, in order, for the note below. */
+  const tried: string[] = [];
 
   for (const path of DETAIL_PATHS(incidentId)) {
     try {
       const media = mediaOf(await apiRequest<IncidentEnvelope>(path, { token, timeoutMs: 10_000 }));
       const url = media ? urlFor(media, variant) : null;
-      if (url) return absoluteMedia(url);
+      if (url) return { url: absoluteMedia(url), note: null };
+      tried.push(media ? `${path} → no ${variant} url (${describe(media)})` : `${path} → no media`);
     } catch (cause) {
       lastFailure = cause;
+      tried.push(`${path} → ${statusOf(cause)}`);
     }
   }
 
@@ -129,21 +162,46 @@ export async function freshMediaUrl(
    * platform are answered above.
    */
   if (options.orgId) {
+    const path = `/org/incidents/${encodeURIComponent(incidentId)}`;
     try {
       const media = mediaOf(
-        await apiRequest<IncidentEnvelope>(`/org/incidents/${encodeURIComponent(incidentId)}`, {
+        await apiRequest<IncidentEnvelope>(path, {
           token,
           timeoutMs: 10_000,
           headers: { 'X-Dawuro-Org': options.orgId },
         }),
       );
       const url = media ? urlFor(media, variant) : null;
-      if (url) return absoluteMedia(url);
+      if (url) return { url: absoluteMedia(url), note: null };
+      tried.push(media ? `${path} → no ${variant} url (${describe(media)})` : `${path} → no media`);
     } catch (cause) {
       lastFailure ??= cause;
+      tried.push(`${path} → ${statusOf(cause)}`);
     }
   }
 
-  if (lastFailure) throw lastFailure;
-  return null;
+  const note = tried.join('; ');
+
+  /*
+   * Thrown only when nothing was readable. A report that *was* read and simply
+   * has no URL for this copy is not a service failure — it is an answer, and
+   * turning it into a 502 would send whoever is debugging it to the wrong
+   * system entirely.
+   */
+  if (lastFailure && tried.every((line) => !line.includes('no '))) throw lastFailure;
+  return { url: null, note };
+}
+
+/** An error's HTTP status, for the note. */
+function statusOf(cause: unknown): string {
+  const status = (cause as { status?: unknown })?.status;
+  return typeof status === 'number' && status > 0 ? String(status) : 'unreachable';
+}
+
+/** Why a media record had nothing to offer — the fields that decide it. */
+function describe(media: MediaRecord): string {
+  const present = (['url', 'playbackUrl', 'originalUrl', 'posterUrl', 'thumbUrl', 'viewUrl'] as const)
+    .filter((key) => media[key])
+    .join(', ');
+  return `kind=${media.kind ?? '?'} status=${media.status ?? '?'} has=${present || 'nothing'}`;
 }

@@ -14,7 +14,31 @@ than claimed.
 Q and **S** outright, and moved E, K, N, R and T a long way. What follows is only
 what is left, which is now a short list.
 
-## ★ Everything still needed — the only list to work from (17 September, after round six)
+**Items U and V were asked for on 28 September and answered the same day —
+thank you.** Both are now ✓ and both are connected, or being connected, on the
+phone. Re-checked against `/v1/openapi.json` at 11:30 on 28 September (147
+paths, up from 139) and exercised end to end against a real registration:
+
+```
+POST /auth/register  { accountKind: "blogger" }        -> 201
+GET  /me            -> accountKind "blogger", verified false
+GET  /me/verification -> pva_…, ONB-PER-…, steps {}, missingDocuments [...]
+GET  /me/payout-method -> { kind: null, momo: null, bank: null }
+```
+
+Two notes from doing that, neither a defect:
+
+1. **`POST /auth/register` requires an `Idempotency-Key` header** and answers
+   `VALIDATION_FAILED "Idempotency-Key header is required."` without one. That
+   is the right call for a money-adjacent write and the app already sends one;
+   it is recorded here because it is not in the endpoint's parameter list.
+2. **`missingDocuments` names an alternative group**, `utility_bill_or_premises_proof`,
+   rather than a document type. Good — it is exactly the "either satisfies it"
+   rule §9.3 describes — but it means a client cannot treat the list as types to
+   upload without splitting on `_or_` first. Worth one line in the schema
+   description so the next client does not learn it the hard way.
+
+## ★ Everything still needed — the only list to work from (17 September, after round six; U and V added 28 September)
 
 **This section is complete.** It was written by checking every mobile screen and
 every console page against `/v1/openapi.json`. Anything already done is not
@@ -52,6 +76,10 @@ done, with what remains named in the item.
 | R | ◐ | Enums named, response timeline added, desk required on publish. Two left: raising a membership request, and the licence state on `/org/inbox` |
 | S | ◐ | Category and fields all landed. `location.label` is resolved but coarse, and `plusCode` is not returned |
 | T | ✓ | Platform rates, `/org/commission-offer` and `commissionOffer` on the public directory — the whole item |
+| U | ✓ | A `blogger` account kind and person verification — **shipped, and connected on 28 September** |
+| V | ✓ | `/me/payout-method` with momo **and** bank — shipped; the phone still sends momo only (ours to finish) |
+| W | P2 | A `country` on every incident and a `country` filter on `/incidents` — only if Dawuro is going beyond Ghana |
+| X | P1 | `accountKind` on `/auth/google`, and a flag saying whether the account was just created |
 
 ---
 
@@ -825,6 +853,215 @@ PUT  /org/commission-offer   { "categoryPesewas": { … } }   → the stored off
 **Done when** a rate changed on the console changes the phone's estimate within
 five minutes, and a report sent to an organisation with an offer is paid at that
 offer.
+
+### U. A `blogger` account kind, and verification for a person — P0
+
+> **✓ Shipped 28 September and connected the same day.** `accountKind` now
+> takes `blogger`, `MeProfile.verified` exists, and `/me/verification*` is the
+> full per-step track with documents. `BACKEND_SPEC.md` §9.5 has been rewritten
+> to describe what was built rather than what was asked for — read that, not
+> the request below, which is kept as the record of why.
+
+**Dawuro is registering three kinds of account, not two:** an individual, a
+**blogger**, and an organisation. A blogger is an independent publisher — one
+person, not an institution — and the product rule is that *every blogger and
+every representative of an institution is verified before they publish*.
+
+Nothing on the service can represent that today.
+
+**1. `accountKind` has no room for it.** `RegisterRequest.accountKind` is a
+closed enum of `user | organisation`, so `blogger` is refused by validation.
+`MeProfile.accountKind` is an unconstrained string, so the read side is already
+ready — it is only registration that cannot express it.
+
+```
+accountKind: "user" | "blogger" | "organisation"   // default "user"
+```
+
+**2. Verification is scoped to an organisation, and a blogger is not one.**
+`/org/onboarding/*` and `/platform/applications/*` both hang off an `orgId`,
+and the only verified flag anywhere is `memberships[].verified`. A person has
+nowhere to be verified and nothing to carry the result.
+
+Asked for, in the shape the existing endpoints already use:
+
+- **An application track for a person.** Either `/me/verification` mirroring
+  `/org/onboarding` (read, per-step save, submit, documents), or — simpler for
+  you and for us — let the existing onboarding endpoints accept an application
+  whose subject is a user rather than an organisation. `stepId` is already an
+  unconstrained string, so a blogger-shaped step set needs no change there.
+- **`verified: boolean` on `MeProfile`**, and on the public `Reporter` shape, so
+  a reader can see that a byline has been checked. Today `Reporter` carries
+  `kind`, `id`, `displayName` and `avatarUrl` and nothing about standing.
+- **Blogger applications in the platform queue.** `GET /platform/applications`
+  returns organisation applications; the console's approval desk needs the
+  person ones in the same queue, distinguishable by kind, with the same
+  per-step decide, screening, approve and reject it already has.
+
+**The document types are already right** — `officer_id` (Ghana Card or
+passport), `utility_bill` and `premises_proof` cover a person, so the
+`documentType` enum needs nothing added.
+
+**Done when** a blogger can register, work through their steps, be approved by a
+platform owner in the console, and come back from `GET /me` as
+`accountKind: "blogger", verified: true`.
+
+**Until it lands:** the phone offers two account kinds, not three. We are not
+shipping a third card that registers as `user` and submits its verification
+nowhere — that is a choice the person cannot tell from a working one.
+
+### V. Bank account details for payouts — P1
+
+> **✓ Shipped 28 September.** `GET`/`PUT /me/payout-method` takes the
+> discriminated momo/bank body as specified. The phone still collects mobile
+> money only at registration — adding the bank half is ours, not yours.
+
+**`/me/payout-msisdn` is the only payout field in the API.** One mobile money
+number. There is no account number, bank name, branch, SWIFT or account-holder
+field on any of the 139 paths.
+
+The product asks reporters and bloggers for **a bank account *or* mobile money**
+when they register. Mobile money we have shipped — it is now collected on the
+third step of registration rather than on the earnings screen, so a commission
+is never held for want of a number nobody asked for. The bank half we have not
+built, because a form whose inputs reach no endpoint is worse than its absence:
+somebody enters their account details, sees them accepted, and is not paid.
+
+Asked for:
+
+```
+GET  /me/payout-method
+PUT  /me/payout-method
+{
+  "kind": "momo" | "bank",
+  "momo": { "msisdn": "+233241234567" },
+  "bank": {
+    "accountName":   "Ama Kufuor",     // as the bank holds it
+    "accountNumber": "1234567890123",
+    "bankCode":      "GCB",            // an enum from you, or free text with a name
+    "branch":        "Accra Main"      // optional where the bank needs it
+  }
+}
+```
+
+Either shape works for us — one endpoint with a discriminated body, or
+`/me/payout-bank` beside the existing `/me/payout-msisdn`. What matters is that
+exactly one method is *active*, so a payout run is never ambiguous about where
+the money goes, and that `GET` says which.
+
+**Validation belongs with you, not with us.** We check a Ghanaian MSISDN on the
+phone because the rule is stable and cheap. Account numbers are per-bank and we
+would be guessing; an accepted number that the bank later rejects is a payout
+that silently fails.
+
+**Also needed:** `payoutStatus: "held"` with `heldReason` already exists on
+`/me/commissions` — please make sure "no payout method on file" is one of the
+reasons it can carry, whichever method is missing.
+
+**Done when** a reporter can save a bank account, `GET /me/payout-method` reads
+it back, and a released batch pays to it.
+
+### W. A country on an incident, and a filter for it — P2
+
+**Ask us before building this one.** It is the only item on this list that is a
+product question rather than a gap: it matters if and only if Dawuro is going to
+carry reports from outside Ghana, and nobody here has told us that it is.
+
+What prompted it: the phone now has a country control in the masthead, left of
+search. Today it offers **Ghana** and lists a handful of West African neighbours
+plainly marked *not yet covered* — because nothing on the service can express a
+country:
+
+- `PublicIncident` has no country field.
+- `GET /incidents` has no `country` parameter (`limit`, `cursor`, `category`,
+  `section`, `origin`, `near`, `radiusM`, `since`, `until`, `sort`).
+- `location` is declared as `{ type: object, nullable: true }` and everything in
+  it is Ghanaian.
+
+The control is built so that the client change, when it comes, is one boolean:
+`covered: true` on an entry in `types/countries.ts`. Nothing about the sheet or
+the masthead needs rework. So there is no rush at this end.
+
+If it is wanted:
+
+```
+PublicIncident.country: string    // ISO 3166-1 alpha-2, e.g. "GH"
+GET /incidents?country=GH&country=NG   // repeatable, OR, like `section`
+```
+
+**The hard part is not the field, it is who sets it.** Three cases and they do
+not answer the same way:
+
+1. A citizen report has a GPS fix, so the country can be derived at submission
+   and should be — asking a reporter to pick their country while standing in
+   front of a fire is the wrong moment for a dropdown.
+2. A report filed with location withheld (§3.5 display flags) still *has* a fix
+   the service holds, so it can still be derived; the country just must not be
+   published if the reporter hid the location. **Deriving it and then leaking it
+   through a filter would undo a privacy choice**, which is the one failure worth
+   being careful about here.
+3. Agency copy on the World desk (`origin: newsroom`) has no capture location at
+   all — §3.9 forbids returning one — so it needs an editor to set the country,
+   or to have none and be excluded from a country filter rather than silently
+   dropped from every one.
+
+**Done when** `GET /incidents?country=GH` returns only Ghanaian reports, a report
+whose reporter hid the location is not exposed by it, and a `newsroom` item
+behaves predictably rather than by accident.
+
+### X. `accountKind` on `/auth/google`, and "was this new?" — P1
+
+**Google sign-in can only ever produce a plain reporter, and that is now a
+visible hole in registration.**
+
+`POST /auth/google` takes an identity and answers with `AuthTokenResponse` —
+`accessToken`, `refreshToken`, two expiries. Nothing goes in to say what kind of
+account to create, and nothing comes back to say whether one *was* created.
+
+Two consequences on the phone, the first of which we have just had to design
+around:
+
+1. **A blogger cannot sign up with Google.** Registration now offers three
+   kinds; "Continue with Google" sat directly under the blogger card and
+   produced a reporter with no verification application — the thing the choice
+   exists to create — with nothing on screen saying so. The button is now hidden
+   for anything but a plain reporter, which is honest and worse.
+2. **A reporter who signs up with Google is never asked for a payout number.**
+   The form's third step collects it, because a commission with no wallet behind
+   it is held rather than paid. The Google path skips the form entirely, and the
+   client cannot prompt afterwards because it has no way to tell a brand-new
+   account from somebody signing in on a second phone — asking a returning
+   reporter for a number they set last year is the wrong correction.
+
+Asked for:
+
+```
+POST /auth/google
+{ "idToken": "…", "accountKind": "user" | "blogger" }   // organisation stays out
+
+200 { "accessToken": …, "refreshToken": …, "expiresAt": …, "refreshExpiresAt": …,
+      "created": true }        // false when the identity already had an account
+```
+
+`created` is the smaller half and the one that unblocks the payout step; a
+boolean is enough.
+
+**Please keep `organisation` out of it**, and keep the elevated kinds out too.
+The summary line on this endpoint says "elevated roles require seeded
+accountKind", which reads as though a caller could ask for one — the client
+sends neither `kind` nor `orgId` and never will, but an enum of exactly
+`user | blogger` on the request makes that a property of the API rather than of
+our restraint.
+
+**And the standing question on this endpoint, still unanswered:** the request
+body is `additionalProperties: true` with nothing declared, so nothing in the
+schema says the ID token's signature and audience are verified server-side.
+Please confirm they are. Unverified, anybody can mint a session for any email
+address, and every other control on this list is moot.
+
+**Done when** registering with Google as a blogger produces
+`accountKind: "blogger"` on `GET /me` with a verification application attached,
+and a first-time Google reporter can be sent to the payout step.
 
 ### Is this list complete?
 

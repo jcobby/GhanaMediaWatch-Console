@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, ShieldCheck, Trash2, X } from 'lucide-react';
 import { PLATFORM_ROLES, ROLE_META, roleCan, type PlatformRole } from '@dawuro/core';
-import { Button, Field } from '@/components/ui';
+import { Button, Field, useToast } from '@/components/ui';
 import { Note, Panel, Pill, Table } from '@/components/admin/Widgets';
 import {
   ADMIN_ROLE_COPY,
@@ -41,6 +41,7 @@ export function AdminManager({
   selfEmail: string;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [admins, setAdmins] = useState(initial);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
@@ -103,6 +104,10 @@ export function AdminManager({
     });
     if (!answer) return;
     replace(answer.admin);
+    toast.success(
+      `${name.trim() || email.trim()} can sign in`,
+      `Added as ${ADMIN_ROLE_COPY[role].label}.`,
+    );
     setName('');
     setEmail('');
     setAdding(false);
@@ -210,7 +215,13 @@ export function AdminManager({
                       action: 'update',
                       id: admin.id,
                       role: e.target.value,
-                    }).then((answer) => replace(answer?.admin))
+                    }).then((answer) => {
+                      if (!answer?.admin) return;
+                      replace(answer.admin);
+                      toast.success(
+                        `${admin.displayName ?? admin.email} is now ${ADMIN_ROLE_COPY[e.target.value as LiveAdminRole]?.label ?? e.target.value}`,
+                      );
+                    })
                   }
                   className="h-8 rounded-sm border border-hairline/15 bg-canvas-soft px-2 text-xs disabled:opacity-60"
                 >
@@ -249,6 +260,10 @@ export function AdminManager({
                         (answer) => {
                           if (!answer?.removed) return;
                           setAdmins((prev) => prev.filter((a) => a.id !== admin.id));
+                          toast.success(
+                            `${admin.displayName ?? admin.email} removed`,
+                            'They can no longer sign in to this console.',
+                          );
                           setRemoving(null);
                         },
                       )
@@ -273,7 +288,18 @@ export function AdminManager({
                         action: 'update',
                         id: admin.id,
                         suspended: !admin.suspended,
-                      }).then((answer) => replace(answer?.admin))
+                      }).then((answer) => {
+                        if (!answer?.admin) return;
+                        replace(answer.admin);
+                        toast.success(
+                          admin.suspended
+                            ? `${admin.displayName ?? admin.email} reinstated`
+                            : `${admin.displayName ?? admin.email} suspended`,
+                          admin.suspended
+                            ? 'They can sign in again.'
+                            : 'They cannot sign in until reinstated.',
+                        );
+                      })
                     }
                   >
                     {admin.suspended ? 'Reinstate' : 'Suspend'}

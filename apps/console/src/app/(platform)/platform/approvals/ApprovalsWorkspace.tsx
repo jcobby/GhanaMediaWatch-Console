@@ -20,7 +20,7 @@ import {
   planFor,
   type OrganisationApplication,
 } from '@dawuro/core';
-import { Badge, Button, Panel } from '@/components/ui';
+import { Badge, Button, Panel, useToast } from '@/components/ui';
 import { ApplicationReview } from '@/components/ApplicationReview';
 import type { ReviewableApplication } from '@/lib/onboarding';
 import { cn } from '@/lib/cn';
@@ -84,6 +84,7 @@ export function ApprovalsWorkspace({
   inOnboarding: ReviewableApplication[];
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [decided, setDecided] = useState<Record<string, 'approved' | 'rejected'>>({});
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -111,13 +112,31 @@ export function ApprovalsWorkspace({
       });
       const answer = (await res.json()) as { error?: string };
       if (!res.ok) {
-        setFailure(answer.error ?? 'That decision could not be sent.');
+        const why = answer.error ?? 'That decision could not be sent.';
+        setFailure(why);
+        toast.error('Nothing was recorded', why);
         return;
       }
       setDecided((prev) => ({ ...prev, [id]: outcome }));
+      /*
+       * Say so, because the only other evidence is a card that vanishes.
+       *
+       * An approved application leaves this list the moment the decision lands,
+       * so a reviewer who was not watching that exact row sees a page that is
+       * one card shorter and has to guess whether the click worked or whether
+       * the list simply refreshed under them.
+       */
+      const name = applications.find((a) => a.id === id)?.organisationName ?? 'The organisation';
+      if (outcome === 'approved') {
+        toast.success(`${name} approved`, 'They can sign in and license reports.');
+      } else {
+        toast.success(`${name} declined`, 'They have been told why, and can apply again.');
+      }
       router.refresh();
     } catch {
-      setFailure('The console could not reach its own server. Check that it is still running.');
+      const why = 'The console could not reach its own server. Check that it is still running.';
+      setFailure(why);
+      toast.error('Nothing was recorded', why);
     }
   };
   const pending = applications.filter((a) => !(a.id in decided));

@@ -68,9 +68,32 @@ the edge runtime and must verify sessions with exactly the same code the server 
 When the backend lands, its access token is stored *inside* the session server-side and
 attached by route handlers under `src/app/api/`. The browser must never see it.
 
+### Every consequential action says that it worked
+
+`src/components/ui/Toast.tsx`, mounted once in `app/layout.tsx`, and reached through
+`useToast()`.
+
+The console used to announce only its *failures*. Approving an organisation, licensing a
+report, releasing a payout batch — each did its work, called `router.refresh()`, and left
+the operator looking at a page where the thing they had acted on was simply **gone**. That
+reads exactly like a click that missed, and these actions are irreversible and expensive:
+an approval grants access to footage of the public, a licence charges money and pays a
+reporter. An operator who cannot tell whether it went through does it again.
+
+The rule: a toast that names *what* happened, not "Saved". `src/__tests__/confirmation.test.ts`
+lists the eleven files that hold a consequential action and fails if any stops confirming.
+`useToast` degrades to no-ops without a provider rather than throwing, which is why that test
+also asserts the mount.
+
+Inline failure messages stay where they are — next to the button that caused them, which is
+better placement than a corner toast for something you must act on. Only the three screens
+where the row *vanishes* on success raise failures as toasts too.
+
 ## Non-negotiables
 
 - **All money is integer pesewas.** Never floats, never client-side rounding.
+- **A screen that acts must say so.** See the confirmation rule above; a success that is
+  indistinguishable from a missed click is a bug, not a missing nicety.
 - **Never silently fall back to fixtures** when the API is unreachable. An outage must look
   like an outage.
 - Shared rules are imported from `@dawuro/core`, never reimplemented.
@@ -136,6 +159,14 @@ that refuses them, where they correctly render the outage.
   service stores no bytes yet (BACKEND-REQUESTS.md item O).
 - **`POST /auth/signin` takes an email with no password** and mints a token for
   whoever asks. Never authenticate through it.
+- **`PublicMedia.url` is nullable and the still variants are null for every
+  video.** `lib/media.ts` falls back `url → playbackUrl → originalUrl` for the
+  playable copy, because reading `url` alone answered 404 about footage sitting
+  on the server. Nothing asks the media route for a `thumb` or `view` of a clip:
+  `posterUrl`, `thumbUrl` and `viewUrl` come back null for all of them, so that
+  request could only ever 404. In development `/api/media/[incidentId]` reports
+  *which* of the failure modes fired; in production it stays a flat 404, because
+  the note names paths and report state.
 - No endpoint describes the caller — no `GET /me`, and the token carries no org
   or role. `lib/auth.ts` infers the account type by probing two reads; delete
   `describeCaller` when a real one lands.

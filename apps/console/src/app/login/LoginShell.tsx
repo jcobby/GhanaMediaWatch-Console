@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { GnaLogo } from '@/components/Brand';
+import { GnaSymbol } from '@/components/Brand';
 
 /**
  * The sign-in page frame.
@@ -22,18 +22,19 @@ export function LoginShell({ children }: { children: ReactNode }) {
       <section className="flex min-h-screen flex-col overflow-y-auto px-6 py-10 sm:px-10 lg:min-h-0 lg:py-12">
         <div className="mx-auto flex w-full max-w-[26rem] flex-1 flex-col justify-center">
           {/*
-           * The lockup sits above the heading, on the side the eye is already
-           * on — the left panel is decoration, this is the page.
+           * The mark sits above the heading, on the side the eye is already on
+           * — the left panel is decoration, this is the page.
            *
-           * Sized so the two lines under the letters actually read. The
-           * lockup is portrait, so height buys less width than it looks like
-           * it should — at 72px "GHANA NEWS AGENCY" came out around four
-           * pixels tall and read as a grey smear.
+           * The symbol rather than the full lockup. The lockup is portrait and
+           * spends most of its height on two lines of type: at a size that fits
+           * here, "GHANA NEWS AGENCY" came out around four pixels tall and read
+           * as a grey smear. The symbol is landscape, so the same height is
+           * spent on the drawing, and the left panel already says Dawuro.
            */}
-          {/* `self-start` matters: a flex child stretches to the column width by
-              default, and the SVG then centres itself inside that box — which
-              left the logo floating over the middle of a left-aligned page. */}
-          <GnaLogo className="mb-8 h-[7.5rem] w-auto self-center" />
+          {/* `self-center` matters: a flex child stretches to the column width
+              by default, and the image then sits against the left edge of that
+              box — which left the mark floating off-centre on the page. */}
+          <GnaSymbol className="mb-8 h-24 w-auto self-center" />
           {children}
         </div>
       </section>

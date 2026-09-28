@@ -42,13 +42,42 @@ export type StepStatus =
   /** A reviewer sent it back, with a reason. */
   | 'rejected';
 
+/** One answer a step collects, as the reviewer and the applicant both see it. */
+export interface OnboardingField {
+  /** The key the service stores it under. Hand-synced with the phone. */
+  key: string;
+  label: string;
+  required: boolean;
+}
+
 export interface OnboardingStepMeta {
   id: OnboardingStepId;
   label: string;
   description: string;
   /** Documents this step expects. */
   documents: DocumentId[];
+  /**
+   * What the step asks for.
+   *
+   * Declared here rather than only in the wizard's JSX, because the reviewer
+   * needs the same list: the approval panel showed a platform owner that a step
+   * had been *submitted* and not one word of what it said, so an organisation's
+   * legal name and its officer's ID were being approved unseen. A label that
+   * lives in one client cannot be read by the other.
+   */
+  fields: OnboardingField[];
+  /**
+   * Whether a platform administrator reviews this step on its own.
+   *
+   * False for `documents`, which is the applicant's *submit* step: it collects
+   * no answers and expects no documents of its own — the three evidence steps
+   * each carry theirs. As a reviewable step it put an empty panel in the
+   * reviewer's tab strip and, worse, gated the final approval on approving
+   * nothing, so every application needed a fourth click that decided nothing.
+   */
+  requiresReview: boolean;
 }
+
 
 export const ONBOARDING_STEPS: OnboardingStepMeta[] = [
   {
@@ -56,26 +85,61 @@ export const ONBOARDING_STEPS: OnboardingStepMeta[] = [
     label: 'Organisation',
     description: 'Legal name, sector and registration number.',
     documents: ['business_registration', 'tax_identification'],
+    fields: [
+      { key: 'legalName', label: 'Registered legal name', required: true },
+      { key: 'registrationNumber', label: 'Registration number', required: true },
+      { key: 'tin', label: 'Tax identification number', required: false },
+    ],
+    requiresReview: true,
   },
   {
     id: 'officer',
     label: 'Authorised officer',
     description: 'The person who signs for this account and their identification.',
     documents: ['officer_id', 'authorisation_letter'],
+    fields: [
+      { key: 'name', label: 'Full name', required: true },
+      { key: 'role', label: 'Position', required: false },
+      { key: 'idNumber', label: 'Ghana Card / passport', required: true },
+      { key: 'phone', label: 'Direct phone', required: false },
+    ],
+    requiresReview: true,
   },
   {
     id: 'coverage',
     label: 'Coverage',
     description: 'Where you operate. Areas decide which incidents can reach your staff.',
     documents: ['premises_proof'],
+    fields: [
+      { key: 'address', label: 'Main office address', required: true },
+      { key: 'city', label: 'City', required: true },
+      { key: 'areaLabel', label: 'Area covered', required: false },
+      { key: 'radiusKm', label: 'Operating radius (km)', required: false },
+    ],
+    requiresReview: true,
   },
   {
     id: 'documents',
     label: 'Documents',
     description: 'Everything attached so far, and anything still missing.',
     documents: [],
+    // The last step collects no answers of its own; it is the paperwork.
+    fields: [],
+    requiresReview: false,
   },
 ];
+
+/**
+ * The steps a reviewer actually works through.
+ *
+ * `documents` is left out: it is the applicant's submit step, collecting no
+ * answers and expecting no documents of its own. As a reviewable step it put an
+ * empty panel in the tab strip and gated the final approval on approving
+ * nothing.
+ */
+export const REVIEWABLE_STEPS: OnboardingStepMeta[] = ONBOARDING_STEPS.filter(
+  (step) => step.requiresReview,
+);
 
 // ─── documents ─────────────────────────────────────────────────────────────
 
@@ -291,7 +355,7 @@ export function approvalProblem(application: OnboardingApplication): ApprovalPro
   if (application.approvedAtIso) return 'already_approved';
   if (!application.submittedAtIso) return 'not_submitted';
 
-  const unapproved = ONBOARDING_STEPS.some(
+  const unapproved = REVIEWABLE_STEPS.some(
     (meta) => stepState(application, meta.id).status !== 'approved',
   );
   if (unapproved) return 'steps_not_approved';
@@ -305,7 +369,7 @@ export function approvalProblem(application: OnboardingApplication): ApprovalPro
 /** Everything an administrator still has to do, in order. */
 export function outstandingForApproval(application: OnboardingApplication): string[] {
   const out: string[] = [];
-  for (const meta of ONBOARDING_STEPS) {
+  for (const meta of REVIEWABLE_STEPS) {
     if (stepState(application, meta.id).status !== 'approved') {
       out.push(`Review and approve the ${meta.label} step.`);
     }

@@ -453,8 +453,19 @@ test('the verification desk can watch what it is ruling on', () => {
    */
   const bench = read('app/(editorial)/editorial/Workbench.tsx');
   expect(bench).toMatch(/videoUrl: mediaHref\(selected\.id\)/);
-  // The screen-sized JPEG copy: a still an `<img>` can always draw.
-  expect(bench).toMatch(/posterUrl=\{mediaHref\(selected\.id, 'view'\)\}/);
+  /*
+   * The screen-sized JPEG copy: a still an `<img>` can always draw — and asked
+   * for **only** on a photo.
+   *
+   * This used to be one unconditional `posterUrl={mediaHref(id, 'view')}` for
+   * every report. The service stores `viewUrl`, `posterUrl` and `thumbUrl` as
+   * null for every clip it holds, so on a video that was a request that could
+   * only ever 404 — one per report, in the network tab of the screen where an
+   * editor is trying to work out why the footage will not play, pointing at
+   * the wrong thing entirely. The player draws its own first frame instead.
+   */
+  expect(bench).toMatch(/posterUrl: mediaHref\(selected\.id, 'view'\)/);
+  expect(bench).toMatch(/kind === 'video'\s*\?/);
 
   /*
    * And the signed URL is never put in front of the browser. It expires, and it

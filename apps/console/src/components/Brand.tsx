@@ -21,17 +21,55 @@
  * variants, for the day a dark-ground surface needs them. They have no
  * component here because nothing calls one yet.
  *
- * **GNA — official.** Supplied artwork, cropped to its content bounds and
- * split into the full lockup and the mark alone at the gutter above the
- * letters. Downscaled, otherwise untouched. `gna-mark.png` has no component
- * here — both public pages carry the full lockup, and the mark is kept for the
- * mobile app's icons, which are generated from it. The SVG recreations that stood in
+ * **GNA — official.** Supplied artwork, cropped to its content bounds.
+ * Downscaled, otherwise untouched in colour. The SVG recreations that stood in
  * for these are deleted — an approximation left beside the real thing is one
  * someone eventually ships by mistake.
+ *
+ * `gna-symbol.png` is the supplied `gna_symbol.png` with the white lifted to
+ * transparency: it arrived as RGB with no alpha, which is a white rectangle on
+ * any surface that is not itself white. Alpha comes from each pixel's distance
+ * to white, edge pixels are un-premultiplied so no curve carries a halo, and a
+ * noise floor discards alpha below 12/255 — the file has been through lossy
+ * compression and its "white" is a field of 252-254 that would otherwise show
+ * as speckle on a dark ground. Ink colours are the artwork's own throughout.
+ * `gna-symbol-reversed.png` additionally flips the gong-gong's near-neutral
+ * black to white, for dark surfaces. The same two files are in the mobile app.
+ *
+ * `gna-digital-platform.png` is the full lockup and `gna-mark.png` the older
+ * mark; neither is called any more, and both are kept because they are supplied
+ * artwork rather than anything generated here.
  */
 
 // ─── GNA ───────────────────────────────────────────────────────────────────
 
+/**
+ * The agency's symbol — the gong-gong, the drums and the flag arc.
+ *
+ * What the public pages lead with. They carried the full portrait lockup,
+ * which spends most of its height on "GHANA NEWS AGENCY / DIGITAL PLATFORM" in
+ * type small enough to read as a grey smear, above a heading that already says
+ * Dawuro. The symbol is the part that is recognised at a glance, and it is the
+ * same mark the phone shows at launch.
+ */
+export function GnaSymbol({
+  className = 'h-20 w-auto',
+  reversed = false,
+}: {
+  className?: string;
+  /** The gong-gong in white, for a dark surface. */
+  reversed?: boolean;
+}) {
+  return (
+    <img
+      src={reversed ? '/brand/gna-symbol-reversed.png' : '/brand/gna-symbol.png'}
+      alt="Ghana News Agency"
+      className={className}
+    />
+  );
+}
+
+/** The full lockup — mark, letters, and the two lines beneath. */
 export function GnaLogo({ className = 'h-20 w-auto' }: { className?: string }) {
   return (
     <img

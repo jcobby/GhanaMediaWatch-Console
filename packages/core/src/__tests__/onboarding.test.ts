@@ -1,6 +1,7 @@
 import {
   DOCUMENT_REQUIREMENTS,
   ONBOARDING_STEPS,
+  REVIEWABLE_STEPS,
   applicantProgress,
   approvalProblem,
   completedByApplicant,
@@ -286,9 +287,29 @@ describe('approving', () => {
 
   it('lists everything the administrator still has to do', () => {
     const outstanding = outstandingForApproval(submitted());
-    // One line per unapproved step, plus screening.
-    expect(outstanding).toHaveLength(ONBOARDING_STEPS.length + 1);
+    /*
+     * One line per unapproved *reviewable* step, plus screening — not per step.
+     *
+     * `documents` is the applicant's submit step: no answers of its own and no
+     * documents of its own, since the three evidence steps each carry theirs.
+     * Counting it here put an empty panel in the reviewer's tab strip and made
+     * every application need a fourth click that decided nothing.
+     */
+    expect(outstanding).toHaveLength(REVIEWABLE_STEPS.length + 1);
+    expect(outstanding.join(' ')).not.toMatch(/Documents step/);
     expect(outstanding[outstanding.length - 1]).toMatch(/screening/i);
+  });
+
+  it('a reviewer only sees steps there is something to review', () => {
+    // Every reviewable step asks for something; the one left out asks for
+    // nothing, which is why it is left out.
+    expect(REVIEWABLE_STEPS.length).toBeGreaterThan(0);
+    for (const step of REVIEWABLE_STEPS) {
+      expect([step.id, step.fields.length + step.documents.length > 0]).toEqual([step.id, true]);
+    }
+    expect(ONBOARDING_STEPS.filter((s) => !s.requiresReview).map((s) => s.id)).toEqual([
+      'documents',
+    ]);
   });
 
   it('says to escalate rather than to re-run when screening hit', () => {

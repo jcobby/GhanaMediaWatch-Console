@@ -30,7 +30,7 @@ import {
   type ResponseEntry,
   type Severity,
 } from '@dawuro/core';
-import { Badge, Button } from '@/components/ui';
+import { Badge, Button, useToast } from '@/components/ui';
 import { MediaFrame } from '@/components/MediaFrame';
 import { mediaHref } from '@/lib/mediaHref';
 import { ResponsePanel } from '@/components/ResponsePanel';
@@ -72,53 +72,13 @@ export function InboxWorkspace({
   reports: Incident[];
   organisation: OrganisationAccount;
 }) {
+  const toast = useToast();
   const plan = planFor(organisation.tier);
   const unlimited = isUnlimited(plan);
   const [licensed, setLicensed] = useState<Set<string>>(new Set());
   /** The report a purchase is in flight for, so its button can say so. */
   const [buying, setBuying] = useState<string | null>(null);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
-
-  /*
-   * Licensing, sent to the service.
-   *
-   * This used to be `setLicensed(...)` alone: the row moved to the Licensed tab,
-   * the button said "Downloaded", and nothing left the browser. A reload brought
-   * the report back unlicensed, and an officer who had bought four reports had
-   * bought none.
-   *
-   * The local state is set **after** the service confirms, never before. An
-   * optimistic tick here is a claim that money changed hands, and it is the one
-   * claim this screen must not make on the strength of a click.
-   */
-  const license = useCallback(async (incidentId: string) => {
-    setBuying(incidentId);
-    setPurchaseError(null);
-    try {
-      const response = await fetch(`/api/org/incidents/${encodeURIComponent(incidentId)}/license`, {
-        method: 'POST',
-      });
-      const body: unknown = await response.json().catch(() => null);
-      if (!response.ok) {
-        /*
-         * The service's own sentence. A report whose verification state forbids
-         * licensing and a subscription that cannot cover it are different
-         * answers, and only one of them is worth trying again.
-         */
-        setPurchaseError(
-          body && typeof body === 'object' && 'error' in body
-            ? String((body as { error: unknown }).error)
-            : 'That could not be licensed.',
-        );
-        return;
-      }
-      setLicensed((prev) => new Set(prev).add(incidentId));
-    } catch {
-      setPurchaseError('The console could not be reached. Nothing was charged.');
-    } finally {
-      setBuying(null);
-    }
-  }, []);
 
   const [filters, setFilters] = useState<InboxFilterState>({
     status: 'offered',
@@ -233,6 +193,93 @@ export function InboxWorkspace({
    * is the billable event, and on an unlimited plan it is already paid for.
    */
   const chargePerDownload = downloadCharge(plan);
+
+  /*
+   * Licensing, sent to the service.
+   *
+   * This used to be `setLicensed(...)` alone: the row moved to the Licensed tab,
+   * the button said "Downloaded", and nothing left the browser. A reload brought
+   * the report back unlicensed, and an officer who had bought four reports had
+   * bought none.
+   *
+   * The local state is set **after** the service confirms, never before. An
+   * optimistic tick here is a claim that money changed hands, and it is the one
+   * claim this screen must not make on the strength of a click.
+   *
+   * **What happens afterwards is half of it.** The purchase worked, said
+   * nothing, and dropped the report out of the Offered queue it had been bought
+   * from — so an officer who had not explicitly clicked a row was left on an
+   * empty tab reading "Select a report to review it", with no word that money
+   * had changed hands. Three things now follow a confirmed licence: it is said
+   * out loud with the amount, the report stays selected so the download and
+   * "send to editor" are where the officer is already looking, and the queue
+   * follows the report to Licensed rather than emptying out underneath them.
+   */
+  const license = useCallback(
+    async (incidentId: string) => {
+      setBuying(incidentId);
+      setPurchaseError(null);
+      try {
+        // Kept on one line: `wiring.test.ts` recognises a screen that saves by
+        // the URL sitting directly after `fetch(`, and a wrapped call reads to
+        // it as a screen that changes nothing.
+        // prettier-ignore
+        const response = await fetch(`/api/org/incidents/${encodeURIComponent(incidentId)}/license`, { method: 'POST' });
+        const body: unknown = await response.json().catch(() => null);
+        if (!response.ok) {
+          /*
+           * The service's own sentence. A report whose verification state forbids
+           * licensing and a subscription that cannot cover it are different
+           * answers, and only one of them is worth trying again.
+           */
+          const why =
+            body && typeof body === 'object' && 'error' in body
+              ? String((body as { error: unknown }).error)
+              : 'That could not be licensed.';
+          setPurchaseError(why);
+          toast.error('Nothing was charged', why);
+          return;
+        }
+        setLicensed((prev) => new Set(prev).add(incidentId));
+
+        const report = reports.find((r) => r.id === incidentId);
+        const where = report ? formatPlace(report.location) : null;
+        toast.success(
+          report ? `Licensed — ${categoryLabel(report.category)}` : 'Licensed',
+          [
+            where,
+            unlimited
+              ? 'Covered by your annual plan.'
+              : chargePerDownload !== null
+                ? `${formatCedis(chargePerDownload)} charged.`
+                : null,
+            'The original is yours to download.',
+          ]
+            .filter(Boolean)
+            .join(' · '),
+        );
+
+        // Stay with the report that was just paid for, however it was reached.
+        setSelectedId(incidentId);
+        /*
+         * Follow it to Licensed only when Offered has nothing left. An officer
+         * working through a batch should keep their place in the queue; an
+         * officer who has just cleared it should not be shown an empty one.
+         */
+        const stillOffered = reports.some((r) => r.id !== incidentId && !licensed.has(r.id));
+        if (!stillOffered) {
+          setFilters((prev) => (prev.status === 'offered' ? { ...prev, status: 'licensed' } : prev));
+        }
+      } catch {
+        const why = 'The console could not be reached. Nothing was charged.';
+        setPurchaseError(why);
+        toast.error('Nothing was charged', why);
+      } finally {
+        setBuying(null);
+      }
+    },
+    [reports, licensed, unlimited, chargePerDownload, toast],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
