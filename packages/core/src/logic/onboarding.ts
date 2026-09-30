@@ -28,7 +28,21 @@
  * asking twice made the first pass look pointless and the second look like the
  * form had forgotten.
  */
-export type OnboardingStepId = 'organisation' | 'officer' | 'coverage' | 'documents';
+export type OrganisationStepId = 'organisation' | 'officer' | 'coverage' | 'documents';
+
+/**
+ * A blogger's three, as `PersonApplication.stepIds` now names them.
+ *
+ * `coverage` is in both sets under the same id and asks different things — an
+ * organisation's operating radius, a blogger's home town. That collision is the
+ * reason nothing may merge the two: a normaliser filtering a blogger's steps
+ * against the organisation ids drops `identity` and `presence` silently and
+ * keeps `coverage`, leaving a review panel that looks like a half-finished
+ * organisation rather than a complete blogger.
+ */
+export type BloggerStepId = 'identity' | 'presence' | 'coverage';
+
+export type OnboardingStepId = OrganisationStepId | BloggerStepId;
 
 export type StepStatus =
   /** Not opened yet. */
@@ -79,6 +93,84 @@ export interface OnboardingStepMeta {
 }
 
 
+/**
+ * What an application is *for*.
+ *
+ * `/platform/applications` returns both kinds in one queue, discriminated by
+ * this — an organisation carries no `kind` at all, a blogger says `"blogger"`.
+ * The reviewer's desk is the same desk; only the step set differs.
+ */
+export type ApplicationKind = 'organisation' | 'blogger';
+
+/**
+ * A blogger's three steps, as the phone sends them and the service now names
+ * them back on `PersonApplication.stepIds`.
+ *
+ * **Not the organisation's four, and the difference is the point.** A blogger
+ * is one person: there is no legal entity to register, no authorised officer to
+ * appoint on anybody's behalf and no premises. Asking for a certificate of
+ * incorporation would be asking somebody to prove they are a company.
+ *
+ * `coverage` appears in both sets under the same id and asks different things,
+ * which is exactly why the reviewer must pick the set by kind rather than merge
+ * them — see `stepsFor`.
+ */
+export const BLOGGER_STEPS: OnboardingStepMeta[] = [
+  {
+    id: 'identity',
+    label: 'Who they are',
+    description: 'Legal name and government ID, checked against the document attached.',
+    documents: ['officer_id'],
+    fields: [
+      { key: 'legalName', label: 'Full legal name', required: true },
+      { key: 'idNumber', label: 'Ghana Card number', required: true },
+      { key: 'phone', label: 'Phone number', required: true },
+    ],
+    requiresReview: true,
+  },
+  {
+    /*
+     * The substance of the check.
+     *
+     * A Ghana Card proves who somebody is; it does not prove they are a
+     * publisher. This step is what separates a verified byline from an ID
+     * check, and it is the one a reviewer should spend their time on.
+     */
+    id: 'presence',
+    label: 'Where they publish',
+    description: 'The site, page or channel they already publish on, and its reach.',
+    documents: [],
+    fields: [
+      { key: 'publicationName', label: 'Publishes as', required: true },
+      { key: 'url', label: 'Site or channel', required: true },
+      { key: 'audience', label: 'Followers', required: false },
+      { key: 'about', label: 'What they cover', required: false },
+    ],
+    requiresReview: true,
+  },
+  {
+    id: 'coverage',
+    label: 'Where they report from',
+    description: 'Where they are based, with something recent carrying the address.',
+    documents: ['utility_bill', 'premises_proof'],
+    fields: [
+      { key: 'city', label: 'City or town', required: true },
+      { key: 'areaLabel', label: 'Areas covered', required: false },
+    ],
+    requiresReview: true,
+  },
+];
+
+/** The step set for one kind of application. */
+export function stepsFor(kind: ApplicationKind): OnboardingStepMeta[] {
+  return kind === 'blogger' ? BLOGGER_STEPS : ONBOARDING_STEPS;
+}
+
+/** The steps a reviewer decides, for one kind. */
+export function reviewableStepsFor(kind: ApplicationKind): OnboardingStepMeta[] {
+  return stepsFor(kind).filter((step) => step.requiresReview);
+}
+
 export const ONBOARDING_STEPS: OnboardingStepMeta[] = [
   {
     id: 'organisation',
@@ -122,24 +214,74 @@ export const ONBOARDING_STEPS: OnboardingStepMeta[] = [
     id: 'documents',
     label: 'Documents',
     description: 'Everything attached so far, and anything still missing.',
+    /*
+     * None of its own. Every file is asked for by the step it belongs to, so
+     * this list stays empty and the review panel special-cases this step to
+     * show the whole set together — see `StepReview`.
+     */
     documents: [],
     // The last step collects no answers of its own; it is the paperwork.
     fields: [],
-    requiresReview: false,
+    requiresReview: true,
   },
 ];
 
 /**
  * The steps a reviewer actually works through.
  *
- * `documents` is left out: it is the applicant's submit step, collecting no
- * answers and expecting no documents of its own. As a reviewable step it put an
- * empty panel in the tab strip and gated the final approval on approving
- * nothing.
+ * **`documents` was left out, and that made every organisation unapprovable.**
+ * The reasoning was that it collects no answers and asks for no files of its
+ * own, so as a reviewable step it put an empty panel in the tab strip and
+ * gated approval on approving nothing.
+ *
+ * The service does not agree, and it is the one enforcing the gate. Read off
+ * the live queue on 29 September, both organisations waiting for a decision
+ * sat at:
+ *
+ *     organisation -> approved      officer   -> approved
+ *     coverage     -> approved      documents -> submitted
+ *
+ * while the one already-approved organisation had `documents -> approved`.
+ * `POST /platform/applications/{id}/approve` answered `steps_not_approved` for
+ * the other two, and the console had no control anywhere that could send that
+ * decision — so it showed three green ticks, "Everything is in order", an
+ * enabled Approve button, and then a server error the reviewer could do
+ * nothing about. Approving those two took one `decide` call each that this
+ * console could not make.
+ *
+ * So it is reviewed, and the empty-panel problem is solved where it belongs:
+ * the panel shows every document attached to the application and anything
+ * still missing, which is a genuinely useful last look before granting an
+ * organisation access to footage filed by the public.
  */
 export const REVIEWABLE_STEPS: OnboardingStepMeta[] = ONBOARDING_STEPS.filter(
   (step) => step.requiresReview,
 );
+
+/**
+ * Every step id either kind of application can carry, as a runtime list.
+ *
+ * **The types said both kinds; the validators said one.** `OnboardingStepId` is
+ * the union of an organisation's four and a blogger's three, but a type is gone
+ * at runtime — so the two route handlers that validate a decision each wrote
+ * their own `z.enum(['organisation', 'officer', 'coverage', 'documents'])`,
+ * copied from the organisation list, and nothing connected them to the union
+ * they were supposed to be enforcing.
+ *
+ * The result was a blogger who could be reviewed on screen and never decided.
+ * Approving their first step sent `stepId: 'identity'`, the enum rejected it
+ * with *"Invalid enum value. Expected 'organisation' | 'officer' | 'coverage' |
+ * 'documents', received 'identity'"*, and the reviewer was shown a Zod parser
+ * error about an enum they had no way to know existed. Every blogger
+ * application was undecidable, and the message explained nothing.
+ *
+ * Derived from the step lists rather than typed out again, because a third
+ * hand-written copy is how this happened in the first place. `Set` because
+ * `coverage` is in both.
+ */
+export const ALL_STEP_IDS: OnboardingStepId[] = [
+  ...new Set([...ONBOARDING_STEPS, ...BLOGGER_STEPS].map((step) => step.id)),
+];
 
 // ─── documents ─────────────────────────────────────────────────────────────
 
@@ -236,6 +378,17 @@ export interface StepState {
 }
 
 export interface OnboardingApplication {
+  /**
+   * Organisation or blogger.
+   *
+   * Optional, and absent reads as `organisation` — an application written
+   * before this existed, and the service's own payload for an organisation,
+   * both carry no `kind` at all. The gates below branch on it, so a wrong
+   * default is not cosmetic: reading a blogger as an organisation asks them to
+   * approve an `officer` step they never had, and the application can never be
+   * approved at all.
+   */
+  kind?: ApplicationKind;
   /** Quoted in every email about this application. */
   reference: string;
   businessId: string;
@@ -355,7 +508,15 @@ export function approvalProblem(application: OnboardingApplication): ApprovalPro
   if (application.approvedAtIso) return 'already_approved';
   if (!application.submittedAtIso) return 'not_submitted';
 
-  const unapproved = REVIEWABLE_STEPS.some(
+  /*
+   * The steps this application actually has.
+   *
+   * Hardcoding the organisation's set here made a blogger unapprovable: their
+   * `organisation` and `officer` steps do not exist, so they could never reach
+   * `approved` and this returned `steps_not_approved` forever — a dead end one
+   * layer below the desk, where nothing on screen would have explained it.
+   */
+  const unapproved = reviewableStepsFor(application.kind ?? 'organisation').some(
     (meta) => stepState(application, meta.id).status !== 'approved',
   );
   if (unapproved) return 'steps_not_approved';
@@ -369,7 +530,7 @@ export function approvalProblem(application: OnboardingApplication): ApprovalPro
 /** Everything an administrator still has to do, in order. */
 export function outstandingForApproval(application: OnboardingApplication): string[] {
   const out: string[] = [];
-  for (const meta of REVIEWABLE_STEPS) {
+  for (const meta of reviewableStepsFor(application.kind ?? 'organisation')) {
     if (stepState(application, meta.id).status !== 'approved') {
       out.push(`Review and approve the ${meta.label} step.`);
     }

@@ -120,13 +120,72 @@ export function assuranceClass(facts: CaptureFacts): AssuranceClass {
 
 /** Which specific checks failed, for a reviewer who needs to know why. */
 export function failedChecks(facts: CaptureFacts): string[] {
-  const failures: string[] = [];
-  if (!facts.integritySignatureValid) failures.push('Integrity signature invalid');
-  if (!facts.timeCheckPassed) failures.push('Device clock disagreed with server time');
-  if (!facts.locationCheckPassed) failures.push('Location accuracy insufficient');
-  if (!facts.deviceCheckPassed) failures.push('Device or session flagged');
-  if (!facts.originalPreserved) failures.push('Original not preserved');
-  return failures;
+  return failedCheckDetails(facts).map((check) => check.label);
+}
+
+/** A failed check, and what a reviewer should take from it. */
+export interface FailedCheck {
+  id: keyof CaptureFacts;
+  label: string;
+  /**
+   * What it means and what usually causes it.
+   *
+   * The label alone is a fact; this is what makes it a decision. "Device clock
+   * disagreed with server time" does not tell an editor whether they are
+   * looking at a phone with the wrong date or at a back-dated file, and those
+   * lead to opposite outcomes.
+   */
+  meaning: string;
+}
+
+const CHECK_MEANING: { id: keyof CaptureFacts; label: string; meaning: string }[] = [
+  {
+    id: 'integritySignatureValid',
+    label: 'File no longer matches its capture signature',
+    meaning:
+      'The stored bytes differ from what was signed at capture. Treat the file as altered until somebody establishes otherwise.',
+  },
+  {
+    id: 'timeCheckPassed',
+    label: 'Device clock disagreed with server time',
+    meaning:
+      'The gap between the time the phone recorded and the time the server received it fell outside tolerance. Usually an unsynced phone clock or a long upload on a slow connection — but it is also what a back-dated file looks like, which is why it flags rather than passes.',
+  },
+  {
+    id: 'locationCheckPassed',
+    label: 'Location accuracy insufficient',
+    meaning:
+      'The fix was missing, too coarse, or dropped during capture. Where the footage was taken cannot be asserted from the file itself.',
+  },
+  {
+    id: 'deviceCheckPassed',
+    label: 'Device or session flagged',
+    meaning:
+      'Rooted, emulated or otherwise flagged by attestation. Nothing the device reported about itself can be relied on.',
+  },
+  {
+    id: 'originalPreserved',
+    label: 'Original not preserved',
+    meaning:
+      'The untouched original is no longer held, so nothing further can be re-derived from it.',
+  },
+];
+
+/**
+ * The failed checks with their meaning, for an authorised reviewer.
+ *
+ * **§4.2 permits this to a reviewer and to nobody else.** `integrity_flagged`
+ * carries "Show the specific flag to authorised reviewers only" — a licensee is
+ * told a report is flagged and not why, because the flag is an internal signal
+ * and some of these describe the reporter's own device.
+ *
+ * `capturedInApp` and `institutionalCapture` are deliberately not listed.
+ * Neither is a failure: the first drops the class to C on its own and is stated
+ * as such, and the second is false for every ordinary citizen report.
+ */
+export function failedCheckDetails(facts: CaptureFacts | undefined): FailedCheck[] {
+  if (!facts) return [];
+  return CHECK_MEANING.filter((check) => facts[check.id] === false);
 }
 
 // ─── verification state ────────────────────────────────────────────────────

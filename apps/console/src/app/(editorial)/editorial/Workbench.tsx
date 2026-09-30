@@ -12,6 +12,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Phone,
+  AlertTriangle,
   PhoneOff,
   Users,
   Video,
@@ -23,6 +24,7 @@ import {
   NEWS_TIER_META,
   VERIFICATION_META,
   verificationMeta,
+  failedCheckDetails,
   assuranceMeta,
   categoryLabel,
   corroborationStrength,
@@ -52,7 +54,7 @@ import { NewsValuePanel, type NewsValueState } from './NewsValuePanel';
 import { useStoredNewsValue } from './useStoredNewsValue';
 import { ReleasePanel } from './ReleasePanel';
 import { CaseTabs, type CaseTab } from './CaseTabs';
-import { QueueThumb } from './QueueThumb';
+import { QueueThumb } from '@/components/QueueThumb';
 import { LeadPanel, type LeadState } from './LeadPanel';
 import { Button, Panel } from '@/components/ui';
 import { MediaFrame } from '@/components/MediaFrame';
@@ -1095,6 +1097,7 @@ function CaseHeader({ incident, state }: { incident: Incident; state: Verificati
   const when = formatExactCapture(incident.capturedAtIso, incident.capturedAtPrecision);
   const where = formatPlace(incident.location);
   const meta = verificationMeta(state);
+  const failures = failedCheckDetails(incident.captureChecks);
 
   return (
     <header>
@@ -1150,6 +1153,43 @@ function CaseHeader({ incident, state }: { incident: Incident; state: Verificati
       >
         {meta.permittedRepresentation}
       </p>
+
+      {/*
+        Which check failed — and this screen is the only place it may appear.
+
+        **The permitted representation for `integrity_flagged` is "Show the
+        specific flag to authorised reviewers only", and until now it was shown
+        to nobody.** The service has sent all eight booleans on every incident
+        since the beginning and the console read none of them, so an editor was
+        told a report had failed *something* and never what — and clearing a
+        flag you cannot see is not a decision, it is a guess. That is the whole
+        job this desk exists to do.
+
+        A licensee still sees only that it is flagged. The distinction is the
+        rule, not an oversight: some of these describe the reporter's own
+        device, and the flag is an internal signal rather than a claim about
+        the footage.
+
+        Each one carries what it means, because the label alone does not decide
+        anything. "Device clock disagreed with server time" could be an unsynced
+        phone or a back-dated file, and those lead opposite ways.
+      */}
+      {failures.length > 0 ? (
+        <div className="mt-3 rounded-sm border border-warning/30 bg-warning-wash/30 p-3">
+          <p className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-text-secondary">
+            <AlertTriangle className="h-3 w-3" strokeWidth={2.5} />
+            {failures.length === 1 ? 'Check that failed' : `${failures.length} checks failed`}
+          </p>
+          <ul className="mt-2 space-y-2">
+            {failures.map((check) => (
+              <li key={check.id}>
+                <p className="text-xs font-medium text-text-primary">{check.label}</p>
+                <p className="mt-0.5 text-2xs leading-relaxed text-text-muted">{check.meaning}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </header>
   );
 }

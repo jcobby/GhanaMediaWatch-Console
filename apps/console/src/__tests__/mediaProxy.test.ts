@@ -69,6 +69,45 @@ test('every screen that shows footage goes through it', () => {
 
   const missing = screens.filter((s) => !code(s).includes('mediaHref('));
   expect(missing).toEqual([]);
+
+  /*
+   * **And in any attribute, not only in a prop spelled `posterUrl`.**
+   *
+   * The rule above checks for `posterUrl={…}`, which is how the large stages
+   * take their source — so it never looked at the inbox's list row, which
+   * wrote `src={incident.media.posterUrl}` on a hand-rolled `<img>`. That
+   * field is null for every video the service stores, so the row rendered the
+   * browser's broken-image glyph beside a report whose footage was on the
+   * server the whole time, and when it was not null it was a signed URL that
+   * went stale while somebody worked the queue.
+   *
+   * Matching the field itself rather than one spelling of a prop is what
+   * closes that: any screen reading `media.posterUrl` into markup fails here,
+   * whatever attribute it is handed to.
+   */
+  const raw = screens.filter((s) => /\bmedia\.posterUrl\b/.test(code(s)));
+  expect(raw).toEqual([]);
+});
+
+test('a list row shows footage through the shared thumbnail, not its own img tag', () => {
+  /*
+   * The inbox row and the editorial row are the same problem — a small still
+   * for a clip the service may not have finished processing — and it was
+   * solved once, well, and then hand-rolled again a screen away.
+   *
+   * `QueueThumb` handles: the service's 320px JPEG through `/api/media`, a
+   * clip's own first frame when there is no thumb yet, a drawn placeholder
+   * when there is genuinely nothing, a skip for files too small to be a
+   * capture, and lazy loading so a fifty-row queue is not fifty media lookups.
+   * None of that was in the inbox's `<img>`.
+   *
+   * It lives in `components/` now because two route groups use it; importing
+   * across route groups is what made the copy look easier than the move.
+   */
+  const inbox = code('app/(organisation)/inbox/InboxWorkspace.tsx');
+  expect(inbox).toMatch(/<QueueThumb incident=\{incident\}/);
+  expect(inbox).not.toMatch(/<img/);
+  expect(read('components/QueueThumb.tsx')).toMatch(/mediaHref\(incident\.id, 'thumb'\)/);
 });
 
 test('the helper the pages import is client-safe', () => {

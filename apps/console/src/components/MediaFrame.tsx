@@ -251,7 +251,15 @@ export function MediaFrame({
           className="absolute inset-0 h-full w-full object-contain"
         />
         {watermark ? <SampleWatermark /> : null}
-        <ProvenanceStamp when={when} where={where} />
+        {/*
+          Stamped at the top, because the browser owns the bottom of a player.
+
+          The native control bar — play, elapsed time, scrubber, volume,
+          fullscreen — is drawn along the bottom edge, and the stamp was sitting
+          on it. Both were unreadable: the place and time over the controls, and
+          the play button under the words.
+        */}
+        <ProvenanceStamp when={when} where={where} placement="top" />
       </div>
     );
   }
@@ -372,14 +380,51 @@ export function MediaFrame({
  * one branch and not the other would be worse than none — footage would travel
  * with no provenance precisely when somebody chose to watch it first.
  */
-function ProvenanceStamp({ when, where }: { when: string | null; where: string | null }) {
+function ProvenanceStamp({
+  when,
+  where,
+  placement = 'bottom',
+}: {
+  when: string | null;
+  where: string | null;
+  /**
+   * Which edge to sit on, which is decided by what else is on that edge.
+   *
+   * **The stamp was always at the bottom, and on a clip that is where the
+   * browser puts its controls.** The place and the time were drawn straight
+   * over the play button, the elapsed time and the scrubber — so the two most
+   * important things in the frame, the claim about where the footage came from
+   * and the control that plays it, were illegible on top of each other.
+   *
+   * A video therefore stamps the top edge, where nothing else lives, and a
+   * still keeps the bottom. Not moved for both: on a photograph the bottom is
+   * the right place for a caption, and the top is where the eye starts reading
+   * the picture.
+   */
+  placement?: 'top' | 'bottom';
+}) {
   if (!when && !where) return null;
 
+  const top = placement === 'top';
+
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 select-none">
+    <div
+      className={cn(
+        'pointer-events-none absolute inset-x-0 select-none',
+        top ? 'top-0' : 'bottom-0',
+      )}
+    >
       {/* A gradient, not a bar: the stamp has to stay legible over any
-          footage without blocking the bottom of the frame. */}
-      <div className="bg-gradient-to-t from-black/80 via-black/40 to-transparent px-4 pb-3 pt-10">
+          footage without blocking the frame. It falls away from whichever edge
+          the stamp sits on, so the picture is only dimmed behind the words. */}
+      <div
+        className={cn(
+          'px-4',
+          top
+            ? 'bg-gradient-to-b from-black/80 via-black/40 to-transparent pb-10 pt-3'
+            : 'bg-gradient-to-t from-black/80 via-black/40 to-transparent pb-3 pt-10',
+        )}
+      >
         <div className="flex flex-col gap-1">
           {where ? (
             <span className="flex items-center gap-1.5 text-xs font-semibold text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.7)]">

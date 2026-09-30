@@ -26,6 +26,18 @@ import { normaliseOnboarding } from '@/lib/onboarding';
  * what was stored rather than what it assumes was stored.
  */
 
+/*
+ * The organisation's four, and deliberately not `ALL_STEP_IDS`.
+ *
+ * This route is an organisation filling in its own wizard against
+ * `/org/onboarding/*`. A blogger never reaches it — they verify on the phone,
+ * through `/me/verification*` — so a blogger step id arriving here is a bug,
+ * and forwarding it to an org-scoped endpoint would turn a clear refusal into
+ * a confusing server error.
+ *
+ * The platform's *decision* route is the one that takes both kinds; it uses
+ * `ALL_STEP_IDS` and says why.
+ */
 const STEP = z.enum(['organisation', 'officer', 'coverage', 'documents']);
 
 /** The service's own ceiling for an onboarding document. */

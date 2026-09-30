@@ -1,6 +1,7 @@
 import {
   DOCUMENT_REQUIREMENTS,
-  ONBOARDING_STEPS,
+  stepsFor,
+  type ApplicationKind,
   type DocumentId,
   type OnboardingApplication,
   type OnboardingStepId,
@@ -43,6 +44,15 @@ import {
 export type ReviewableApplication = OnboardingApplication & {
   id: string;
   payloads?: OnboardingView['payloads'];
+  /**
+   * Organisation or blogger.
+   *
+   * `/platform/applications` returns both in one queue and discriminates on
+   * `kind` — absent for an organisation, `"blogger"` for a person. Everything
+   * downstream branches on this, because the two share a desk and not a step
+   * set.
+   */
+  kind: ApplicationKind;
 };
 
 export interface OnboardingView {
@@ -57,7 +67,15 @@ export interface OnboardingView {
   payloads: Partial<Record<OnboardingStepId, Record<string, unknown>>>;
 }
 
-const STEP_IDS = new Set<string>(ONBOARDING_STEPS.map((step) => step.id));
+/**
+ * The ids each kind of application may carry.
+ *
+ * **Per kind, not one merged set.** `coverage` belongs to both and asks
+ * different things, so a single set filtered a blogger's steps down to that one
+ * — dropping `identity` and `presence` without a word and rendering a complete
+ * application as a half-finished organisation.
+ */
+const stepIdsFor = (kind: ApplicationKind) => new Set<string>(stepsFor(kind).map((s) => s.id));
 
 type Loose = Record<string, unknown>;
 
@@ -95,6 +113,14 @@ function statusOf(value: unknown): StepState['status'] {
 
 export function normaliseOnboarding(raw: unknown, fallbackName = ''): OnboardingView {
   const source: Loose = isRecord(raw) ? raw : {};
+
+  /*
+   * The service says which this is; an organisation says nothing at all.
+   *
+   * Read before anything else, because every branch below depends on it.
+   */
+  const kind: ApplicationKind = source.kind === 'blogger' ? 'blogger' : 'organisation';
+  const STEP_IDS = stepIdsFor(kind);
 
   // `stepsView` lists every step; `steps` only those touched. Either may be a
   // map or, from an older build, a list.
@@ -140,12 +166,25 @@ export function normaliseOnboarding(raw: unknown, fallbackName = ''): Onboarding
   return {
     application: {
       id: text(source.id) ?? text(source.applicationId) ?? '',
+      kind,
       reference: text(source.reference) ?? '',
-      businessId: text(source.orgId) ?? '',
+      // A blogger has no organisation; `userId` is the party this is about.
+      businessId: text(source.orgId) ?? text(source.userId) ?? '',
+      /*
+       * Whose application this is, in the one place a reviewer reads first.
+       *
+       * A `PersonApplication` carries no name field at all — only `userId` and
+       * a reference — so the name has to come out of the `identity` step the
+       * blogger filled in, which is the same trick this already does for an
+       * organisation's `legalName`. Without it a platform owner decides whether
+       * somebody may publish under a checked byline while looking at
+       * `ONB-PER-FB2036`.
+       */
       organisationName:
         text(source.organisationName) ??
         text(source.orgName) ??
         text(organisation.name) ??
+        (kind === 'blogger' ? text(payloads.identity?.legalName) : null) ??
         fallbackName,
       steps,
       documents,

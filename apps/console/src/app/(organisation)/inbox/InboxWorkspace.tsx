@@ -32,6 +32,7 @@ import {
 } from '@dawuro/core';
 import { Badge, Button, useToast } from '@/components/ui';
 import { MediaFrame } from '@/components/MediaFrame';
+import { QueueThumb } from '@/components/QueueThumb';
 import { mediaHref } from '@/lib/mediaHref';
 import { ResponsePanel } from '@/components/ResponsePanel';
 import { NotesPanel } from '@/components/NotesPanel';
@@ -373,19 +374,26 @@ export function InboxWorkspace({
                               className="absolute inset-y-0 left-0 w-[3px] rounded-r-pill bg-accent"
                             />
                           ) : null}
-                          <span className="relative h-[52px] w-[42px] shrink-0 overflow-hidden rounded-xs bg-canvas-raise">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={incident.media.posterUrl}
-                              alt=""
-                              className="h-full w-full object-cover"
-                            />
-                            {incident.media.kind === 'video' ? (
-                              <span className="absolute bottom-0.5 right-0.5 rounded-[3px] bg-black/70 p-[3px]">
-                                <Video className="h-2.5 w-2.5 text-white" strokeWidth={2.5} />
-                              </span>
-                            ) : null}
-                          </span>
+                          {/*
+                            The queue's own thumbnail, not a hand-rolled `<img>`.
+
+                            This row pointed straight at `incident.media.posterUrl`,
+                            and that field is **null for every video the service
+                            stores** — so `src` was undefined and the row drew the
+                            browser's broken-image glyph next to a report whose
+                            footage was sitting on the server the whole time. When
+                            it was not null it was a signed URL with an `exp`, so
+                            it went stale while somebody worked the inbox.
+
+                            `QueueThumb` already solved all of this for the
+                            editorial queue: the service's small JPEG through
+                            `/api/media`, a clip's own first frame when there is
+                            no thumb yet, a drawn placeholder when there is
+                            genuinely nothing, and lazy loading so fifty rows are
+                            not fifty media lookups. It moved to `components/`
+                            rather than being copied.
+                          */}
+                          <QueueThumb incident={incident} className="h-[52px] w-[42px]" />
                           <span className="min-w-0 flex-1">
                             <span className="flex items-center gap-1.5">
                               <span
@@ -710,6 +718,33 @@ function PreviewPane({
                 </p>
               </>
             )}
+            {/*
+              Why the button is dead, said where the button is.
+
+              **A disabled control with no reason beside it is the same thing as
+              a broken one.** Licensing is gated on the report's verification
+              state, and this footer showed the price and a greyed button
+              regardless — so a report whose capture integrity failed looked
+              exactly like one the console had a bug about. The state is on the
+              page, in a badge at the top of a scrolling panel, but nothing
+              connected it to the thing that would not respond.
+
+              The gate itself is right and stays: a report that failed its
+              integrity check must not be sold however much a subscriber wants
+              it, because licensing pays a reporter for material the platform
+              cannot stand behind. What was missing is the sentence.
+            */}
+            {!licensed && !canLicenseReport(incident.verification) ? (
+              <p className="mt-1.5 text-xs leading-relaxed text-text-muted">
+                <span className="font-medium text-text-secondary">
+                  {verificationMeta(incident.verification).label}
+                </span>{' '}
+                — this report cannot be licensed while it is in this state.{' '}
+                {incident.verification === 'rejected'
+                  ? 'It failed review and will not become available.'
+                  : 'An editor has to clear it first.'}
+              </p>
+            ) : null}
             {/* The failure sits where the price does, so a refusal and a charge
                 are never on screen together saying different things. */}
             {purchaseError ? (

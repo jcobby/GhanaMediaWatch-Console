@@ -45,13 +45,13 @@ describe('a queue row shows what was filmed', () => {
   });
 
   test('previews load when they come into view, not all at once', () => {
-    const thumb = code('app/(editorial)/editorial/QueueThumb.tsx');
+    const thumb = code('components/QueueThumb.tsx');
     expect(thumb).toMatch(/new IntersectionObserver\(/);
     expect(thumb).toMatch(/!visible \? null/);
   });
 
   test("the service's small copy, with a clip's first frame only as a fallback", () => {
-    const thumb = code('app/(editorial)/editorial/QueueThumb.tsx');
+    const thumb = code('components/QueueThumb.tsx');
     expect(thumb).toMatch(/mediaHref\(incident\.id, 'thumb'\)/);
     expect(thumb).toMatch(/const frameFallback = kind === 'video' && thumbFailed/);
     // A first frame, not the clip.
@@ -59,12 +59,12 @@ describe('a queue row shows what was filmed', () => {
   });
 
   test('through the console media route, never a signed URL', () => {
-    const thumb = code('app/(editorial)/editorial/QueueThumb.tsx');
+    const thumb = code('components/QueueThumb.tsx');
     expect(thumb).not.toMatch(/media\.url|posterUrl|thumbUrl/);
   });
 
   test('a file too small to be a capture is not fetched', () => {
-    const thumb = code('app/(editorial)/editorial/QueueThumb.tsx');
+    const thumb = code('components/QueueThumb.tsx');
     expect(thumb).toMatch(/size < MIN_PLAUSIBLE_MEDIA_BYTES/);
     expect(thumb).toMatch(/tooSmall \|\| failed \|\|/);
   });

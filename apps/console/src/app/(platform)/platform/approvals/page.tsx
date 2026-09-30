@@ -66,7 +66,21 @@ export default async function Page() {
             ? 'The queue could not be read.'
             : waiting === 0
               ? 'No applications waiting for a decision.'
-              : `${waiting} ${waiting === 1 ? 'organisation' : 'organisations'} waiting for a decision.`
+              : /*
+                 * "Application", because this queue holds two kinds.
+                 *
+                 * It read "1 organisation waiting for a decision" over a list
+                 * whose only entry was a blogger. The count was right and the
+                 * noun was wrong, which is worse than vague: a reviewer
+                 * scanning the header is told the queue holds something it
+                 * does not, and the one thing actually waiting is the thing
+                 * the sentence denies is there.
+                 *
+                 * Not split into "1 organisation and 2 bloggers" — the header
+                 * says how much work is waiting, and each row already carries
+                 * its own kind as a badge.
+                 */
+                `${waiting} ${waiting === 1 ? 'application' : 'applications'} waiting for a decision.`
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto">

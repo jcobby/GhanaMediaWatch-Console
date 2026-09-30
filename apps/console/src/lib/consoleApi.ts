@@ -1037,6 +1037,23 @@ export const publicApi = {
    */
   acceptInvite: <T>(token: string, body: unknown) =>
     apiRequest<T>(`/invites/${encodeURIComponent(token)}/accept`, { method: 'POST', body }),
+  /**
+   * Ask an organisation to add you, without an invite.
+   *
+   * The other way in, and the one that was missing from every client. Not
+   * org-scoped: the caller is by definition outside the organisation, so there
+   * is no `X-Dawuro-Org` to send. The session is what identifies them.
+   *
+   * Idempotent on the organisation rather than on the whole body, so a second
+   * click sends one request and a genuinely new ask to a *different*
+   * organisation is not mistaken for a replay of the first.
+   */
+  requestMembership: <T>(body: { orgId: string }) =>
+    apiRequest<T>('/membership-requests', {
+      method: 'POST',
+      body,
+      idempotencyKey: `membership-request:${body.orgId}`,
+    }),
 };
 
 // ─── the admin dashboards ──────────────────────────────────────────────────

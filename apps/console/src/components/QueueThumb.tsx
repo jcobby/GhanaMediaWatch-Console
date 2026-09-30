@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ImageOff, Loader2, Mic, Play } from 'lucide-react';
 import { MIN_PLAUSIBLE_MEDIA_BYTES, type Incident } from '@dawuro/core';
 import { mediaHref } from '@/lib/mediaHref';
+import { cn } from '@/lib/cn';
 
 /**
  * What a queue row holds, small enough to scan.
@@ -28,7 +29,18 @@ import { mediaHref } from '@/lib/mediaHref';
  * Nothing is fetched for a file too small to be a capture: the probes in the
  * queue hold a few kilobytes of random data.
  */
-export function QueueThumb({ incident }: { incident: Incident }) {
+export function QueueThumb({
+  incident,
+  className = 'h-[54px] w-[72px]',
+}: {
+  incident: Incident;
+  /**
+   * The frame's size, because the two queues that use this are shaped
+   * differently — the editorial row is landscape, the inbox row is portrait.
+   * Only the box: everything inside fills it.
+   */
+  className?: string;
+}) {
   const ref = useRef<HTMLSpanElement>(null);
   const [visible, setVisible] = useState(false);
   /** The thumb would not load; for a clip, try its first frame instead. */
@@ -63,7 +75,10 @@ export function QueueThumb({ incident }: { incident: Incident }) {
     <span
       ref={ref}
       aria-hidden
-      className="relative flex h-[54px] w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-xs bg-glass-media"
+      className={cn(
+        'relative flex shrink-0 items-center justify-center overflow-hidden rounded-xs bg-glass-media',
+        className,
+      )}
     >
       {kind === 'audio' ? (
         <Mic className="h-4 w-4 text-white/60" strokeWidth={2} />

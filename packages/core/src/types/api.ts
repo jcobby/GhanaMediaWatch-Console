@@ -12,7 +12,7 @@
 
 // ─── enumerations ──────────────────────────────────────────────────────────
 
-import type { AssuranceClass, VerificationState } from './assurance';
+import type { AssuranceClass, CaptureFacts, VerificationState } from './assurance';
 import type { HandlingRequirement, Severity } from './context';
 
 export const INCIDENT_CATEGORIES = [
@@ -298,6 +298,19 @@ export interface Incident {
    * into one field is the day something unverified gets published as verified.
    */
   verification: VerificationState;
+  /**
+   * The individual checks behind `assurance`, when the service sends them.
+   *
+   * **On the wire since the beginning and read by nothing.** `assurance: 'B'`
+   * says one of five checks failed and never which, so an editor looking at a
+   * flagged report was told there was a problem and not what it was — and
+   * clearing a flag you cannot see is not a decision, it is a guess. The
+   * booleans were there the whole time.
+   *
+   * Optional because a client must not break on a service that omits them, and
+   * because the public feed has no business carrying them.
+   */
+  captureChecks?: CaptureFacts;
   /** The reporter's own account of how urgent it is. */
   severity: Severity;
   /** A nearby name people use, when coordinates are not enough. */

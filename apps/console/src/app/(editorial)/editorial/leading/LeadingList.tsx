@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Star } from 'lucide-react';
 import { formatRelativeTime, type Incident } from '@dawuro/core';
 import { Button, Panel } from '@/components/ui';
-import { QueueThumb } from '../QueueThumb';
+import { QueueThumb } from '@/components/QueueThumb';
 
 /** A leading report, with the fields `GET /editorial/leading` adds. */
 type Led = Incident & {

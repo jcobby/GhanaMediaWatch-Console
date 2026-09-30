@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { ALL_STEP_IDS } from '@dawuro/core';
 import { readSession } from '@/lib/session';
 import { ApiUnavailable } from '@/lib/apiError';
 import { platform } from '@/lib/consoleApi';
@@ -26,7 +27,28 @@ const schema = z.discriminatedUnion('decision', [
   }),
   z.object({
     decision: z.literal('step'),
-    stepId: z.enum(['organisation', 'officer', 'coverage', 'documents']),
+    /*
+     * Both kinds of application, from the one list they are declared in.
+     *
+     * **This enum was the organisation's four, typed out by hand, and it made
+     * every blogger undecidable.** The platform queue carries organisations
+     * and bloggers together, but a blogger's steps are `identity`, `presence`
+     * and `coverage` — so approving their first one sent `stepId: 'identity'`,
+     * this rejected it, and the reviewer was shown a Zod parser error naming
+     * an enum they had no way to know about: *"Invalid enum value. Expected
+     * 'organisation' | 'officer' | 'coverage' | 'documents', received
+     * 'identity'"*. The panel rendered perfectly and no decision could be
+     * recorded through it.
+     *
+     * `ALL_STEP_IDS` is derived from the two step lists, so a step added to
+     * either kind is accepted here without anybody remembering to come back.
+     *
+     * Note this is the one route that takes both. `api/onboarding/route.ts`
+     * keeps the organisation's four deliberately — that is an organisation
+     * filling in its own wizard against `/org/onboarding/*`, and a blogger
+     * step id arriving there is a bug worth refusing rather than forwarding.
+     */
+    stepId: z.enum(ALL_STEP_IDS as [string, ...string[]]),
     status: z.enum(['approved', 'rejected']),
     note: z.string().trim().optional(),
   }),

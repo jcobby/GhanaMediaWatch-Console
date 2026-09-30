@@ -1,17 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, Check, FileText, ShieldCheck, X } from 'lucide-react';
 import {
   DOCUMENT_REQUIREMENTS,
-  ONBOARDING_STEPS,
-  REVIEWABLE_STEPS,
+  reviewableStepsFor,
+  stepsFor,
   approvalProblem,
   formatRelativeTime,
+  missingDocuments,
   outstandingForApproval,
   stepState,
   type DocumentId,
+  type ApplicationKind,
   type OnboardingApplication,
   type OnboardingStepId,
 } from '@dawuro/core';
@@ -41,7 +43,21 @@ export function ApplicationReview({ application }: { application: ReviewableAppl
   const router = useRouter();
   const toast = useToast();
   const [live, setLive] = useState<OnboardingApplication>(application);
-  const [tab, setTab] = useState<OnboardingStepId | 'screening'>(REVIEWABLE_STEPS[0]!.id);
+
+  /*
+   * The step set follows the application, not the file.
+   *
+   * One desk reviews both kinds now — `/platform/applications` returns them in
+   * one queue — and they share almost everything: submit, send back, screen,
+   * approve. What they do not share is what is being reviewed. An organisation
+   * has four steps about a legal entity; a blogger has three about a person,
+   * and `coverage` is in both under the same id asking different things. Hard
+   * coding the organisation's set showed a blogger's application as three tabs
+   * of "Not submitted" with their answers nowhere.
+   */
+  const steps = useMemo(() => reviewableStepsFor(application.kind), [application.kind]);
+  const isBlogger = application.kind === 'blogger';
+  const [tab, setTab] = useState<OnboardingStepId | 'screening'>(steps[0]!.id);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -104,7 +120,7 @@ export function ApplicationReview({ application }: { application: ReviewableAppl
     });
     if (!sent) return;
 
-    const label = REVIEWABLE_STEPS.find((meta) => meta.id === id)?.label ?? id;
+    const label = steps.find((meta) => meta.id === id)?.label ?? id;
     if (status === 'approved') {
       toast.success(`${label} approved`, `${who} — one step closer to a decision.`);
     } else {
@@ -123,7 +139,7 @@ export function ApplicationReview({ application }: { application: ReviewableAppl
      * and jumping away from it hides the reason that was just typed.
      */
     if (status === 'approved') {
-      const next = REVIEWABLE_STEPS.find(
+      const next = steps.find(
         (meta) => meta.id !== id && stepState(live, meta.id).status !== 'approved',
       );
       // Everything reviewed: the only thing left is screening and the decision.
@@ -179,7 +195,7 @@ export function ApplicationReview({ application }: { application: ReviewableAppl
   };
 
   /** Steps a reviewer has yet to approve. Drives both the button and the loop. */
-  const outstandingSteps = REVIEWABLE_STEPS.filter(
+  const outstandingSteps = steps.filter(
     (meta) => stepState(live, meta.id).status !== 'approved',
   );
 
@@ -204,10 +220,26 @@ export function ApplicationReview({ application }: { application: ReviewableAppl
           */}
           <h2 className="truncate text-base font-semibold tracking-[-0.01em]">
             {live.organisationName ||
+              /* An organisation's legal name, or a blogger's — different steps,
+                 same question: who is this application about. */
               fieldOf(application.payloads?.organisation, 'legalName') ||
-              'Unnamed organisation'}
+              fieldOf(application.payloads?.identity, 'legalName') ||
+              (isBlogger ? 'Unnamed blogger' : 'Unnamed organisation')}
           </h2>
-          <p className="font-mono text-2xs tracking-wider text-text-faint">{live.reference}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-mono text-2xs tracking-wider text-text-faint">{live.reference}</p>
+            {/*
+              Which kind, on the line with the filing number.
+
+              One queue holds both now, and they are decided differently: an
+              organisation is being granted access to footage of the public, a
+              blogger a byline readers are asked to trust. A reviewer opening a
+              panel should not have to infer which from the tab labels.
+            */}
+            <Badge tone={isBlogger ? 'info' : 'neutral'}>
+              {isBlogger ? 'Blogger' : 'Organisation'}
+            </Badge>
+          </div>
         </div>
         <Badge tone={live.submittedAtIso ? 'info' : 'neutral'}>
           {live.approvedAtIso ? 'Approved' : live.submittedAtIso ? 'Under review' : 'Draft'}
@@ -222,7 +254,7 @@ export function ApplicationReview({ application }: { application: ReviewableAppl
 
       {/* Step tabs, mirroring what the applicant filled in. */}
       <div className="flex flex-wrap gap-1">
-        {REVIEWABLE_STEPS.map((meta) => {
+        {steps.map((meta) => {
           const state = stepState(live, meta.id);
           const active = tab === meta.id;
           return (
@@ -297,6 +329,7 @@ export function ApplicationReview({ application }: { application: ReviewableAppl
         <StepReview
           application={live}
           applicationId={application.id}
+          kind={application.kind}
           payload={application.payloads?.[tab]}
           id={tab}
           rejecting={rejecting}
@@ -320,7 +353,9 @@ export function ApplicationReview({ application }: { application: ReviewableAppl
         <Panel className="p-5">
           <h3 className="text-sm font-semibold">Sanctions and adverse-media screening</h3>
           <p className="mt-1 text-xs leading-relaxed text-text-muted">
-            Run against the organisation and its authorised officer.
+            {isBlogger
+              ? 'Run against this person and the name they publish under.'
+              : 'Run against the organisation and its authorised officer.'}
           </p>
 
           <p className="mt-3 text-xs">
@@ -509,6 +544,7 @@ export function ApplicationReview({ application }: { application: ReviewableAppl
 function StepReview({
   application,
   applicationId,
+  kind,
   payload,
   id,
   rejecting,
@@ -523,6 +559,8 @@ function StepReview({
   application: OnboardingApplication;
   /** Needed to fetch the attached files, which hang off the application. */
   applicationId: string;
+  /** Decides which step set the label, description and fields come from. */
+  kind: ApplicationKind;
   /** What the applicant typed into this step. The thing being reviewed. */
   payload: Record<string, unknown> | undefined;
   id: OnboardingStepId;
@@ -535,9 +573,39 @@ function StepReview({
   onApprove: () => void;
   onReject: () => void;
 }) {
-  const meta = ONBOARDING_STEPS.find((m) => m.id === id)!;
+  /*
+   * Non-null because the caller only ever renders a tab it took from the same
+   * set — but `coverage` exists in both, so reading it out of the wrong one
+   * would silently show an organisation's operating radius where a blogger's
+   * home town belongs.
+   */
+  const meta = stepsFor(kind).find((m) => m.id === id)!;
   const state = stepState(application, id);
-  const docs = application.documents.filter((d) => meta.documents.includes(d.id));
+  /*
+   * The paperwork step shows everything; every other step shows its own.
+   *
+   * `documents` asks for no files of its own — each one is collected by the
+   * step it belongs to — so filtering by `meta.documents` left this panel
+   * empty, which is why it was dropped from review in the first place. That
+   * turned out to be the reason no organisation could be approved: the service
+   * counts `documents` in its gate and the console had no control that could
+   * decide it.
+   *
+   * Showing the complete set here is not a duplicate so much as the last look:
+   * a reviewer who approved the organisation step ten minutes ago is about to
+   * grant access to footage filed by the public, and seeing all of the
+   * paperwork at once — including anything still missing, which appears
+   * nowhere else on this screen — is the check worth having at that moment.
+   */
+  const isPaperwork = id === 'documents';
+  const docs = isPaperwork
+    ? application.documents
+    : application.documents.filter((d) => meta.documents.includes(d.id));
+  // Computed from what was attached against what is required, so an alternative
+  // that satisfies a requirement counts — see `documentSatisfied` in core.
+  const missing = isPaperwork
+    ? missingDocuments(application).map((d) => DOCUMENT_REQUIREMENTS[d].label)
+    : [];
 
   return (
     <Panel className="p-5">
@@ -597,8 +665,10 @@ function StepReview({
         </div>
 
         <div className="rounded-sm border border-hairline/[0.08] p-3.5">
-          <p className="text-2xs uppercase tracking-wider text-text-faint">Documents</p>
-          {meta.documents.length === 0 ? (
+          <p className="text-2xs uppercase tracking-wider text-text-faint">
+            {isPaperwork ? 'Everything attached' : 'Documents'}
+          </p>
+          {meta.documents.length === 0 && !isPaperwork ? (
             <p className="mt-1.5 text-xs text-text-muted">This step needs no documents.</p>
           ) : docs.length === 0 ? (
             <p className="mt-1.5 text-xs text-text-muted">Nothing attached.</p>
@@ -628,6 +698,22 @@ function StepReview({
               ))}
             </ul>
           )}
+
+          {/*
+            What is still missing, which appears nowhere else on this screen.
+
+            `missingDocuments` comes from the service and is the one fact a
+            reviewer cannot work out by looking — a list of what was attached
+            says nothing about what was required. Shown only on the paperwork
+            step, because that step's whole job is the completeness check, and
+            hidden when the list is empty rather than announcing "nothing
+            missing" on every application.
+          */}
+          {isPaperwork && missing.length > 0 ? (
+            <p className="mt-2.5 rounded-xs bg-danger-wash/40 px-2.5 py-2 text-2xs text-text-secondary">
+              Still missing: {missing.join(', ')}
+            </p>
+          ) : null}
         </div>
       </div>
 

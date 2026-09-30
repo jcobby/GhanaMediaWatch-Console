@@ -288,28 +288,62 @@ describe('approving', () => {
   it('lists everything the administrator still has to do', () => {
     const outstanding = outstandingForApproval(submitted());
     /*
-     * One line per unapproved *reviewable* step, plus screening — not per step.
+     * One line per unapproved step, plus screening — and `documents` is a step.
      *
-     * `documents` is the applicant's submit step: no answers of its own and no
-     * documents of its own, since the three evidence steps each carry theirs.
-     * Counting it here put an empty panel in the reviewer's tab strip and made
-     * every application need a fourth click that decided nothing.
+     * **This asserted the opposite, and the opposite was unapprovable.** The
+     * reasoning was that `documents` is the applicant's submit step, carrying
+     * no answers and no files of its own, so reviewing it decided nothing.
+     * The service does not agree, and it holds the gate. Read off the live
+     * queue on 29 September, both organisations waiting for a decision sat at
+     * `organisation/officer/coverage -> approved`, `documents -> submitted`,
+     * and `POST /platform/applications/{id}/approve` answered
+     * `steps_not_approved` for both — while the one already-approved
+     * organisation had `documents -> approved`.
+     *
+     * So the reviewer does have a fourth thing to do, and leaving it off this
+     * list is what left them with three green ticks, "Everything is in order"
+     * and a server refusal they had no control to answer.
      */
     expect(outstanding).toHaveLength(REVIEWABLE_STEPS.length + 1);
-    expect(outstanding.join(' ')).not.toMatch(/Documents step/);
+    expect(outstanding.join(' ')).toMatch(/Documents step/);
     expect(outstanding[outstanding.length - 1]).toMatch(/screening/i);
   });
 
-  it('a reviewer only sees steps there is something to review', () => {
-    // Every reviewable step asks for something; the one left out asks for
-    // nothing, which is why it is left out.
-    expect(REVIEWABLE_STEPS.length).toBeGreaterThan(0);
-    for (const step of REVIEWABLE_STEPS) {
-      expect([step.id, step.fields.length + step.documents.length > 0]).toEqual([step.id, true]);
-    }
-    expect(ONBOARDING_STEPS.filter((s) => !s.requiresReview).map((s) => s.id)).toEqual([
+  it('every organisation step is reviewed, including the paperwork', () => {
+    /*
+     * All four, because the service counts all four.
+     */
+    expect(REVIEWABLE_STEPS.map((s) => s.id)).toEqual([
+      'organisation',
+      'officer',
+      'coverage',
       'documents',
     ]);
+    expect(ONBOARDING_STEPS.filter((s) => !s.requiresReview)).toEqual([]);
+  });
+
+  it('the paperwork step asks for nothing of its own, and that is why its panel is special', () => {
+    /*
+     * The empty-panel problem was real — it was solved in the wrong place.
+     *
+     * `documents` declares no fields and no documents, because every file is
+     * collected by the step it belongs to. Filtering the review panel by
+     * `meta.documents` therefore rendered it blank, and the response was to
+     * drop it from review entirely, which broke approval.
+     *
+     * It stays empty here, deliberately: the panel special-cases this id and
+     * shows the whole attached set plus anything still missing. This pins the
+     * shape that special case depends on — if a future edit gives this step
+     * documents of its own, the panel would list them twice.
+     */
+    const paperwork = ONBOARDING_STEPS.find((s) => s.id === 'documents')!;
+    expect(paperwork.fields).toEqual([]);
+    expect(paperwork.documents).toEqual([]);
+
+    // Every other step earns its panel the ordinary way.
+    for (const step of REVIEWABLE_STEPS.filter((s) => s.id !== 'documents')) {
+      expect([step.id, step.fields.length + step.documents.length > 0]).toEqual([step.id, true]);
+    }
   });
 
   it('says to escalate rather than to re-run when screening hit', () => {

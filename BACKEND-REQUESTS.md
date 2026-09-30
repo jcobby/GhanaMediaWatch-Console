@@ -80,6 +80,7 @@ done, with what remains named in the item.
 | V | ✓ | `/me/payout-method` with momo **and** bank — shipped; the phone still sends momo only (ours to finish) |
 | W | P2 | A `country` on every incident and a `country` filter on `/incidents` — only if Dawuro is going beyond Ghana |
 | X | P1 | `accountKind` on `/auth/google`, and a flag saying whether the account was just created |
+| Y | ✓ | Blogger review — **shipped 29 September and connected the same day**. One queue, both kinds |
 
 ---
 
@@ -1062,6 +1063,94 @@ address, and every other control on this list is moot.
 **Done when** registering with Google as a blogger produces
 `accountKind: "blogger"` on `GET /me` with a verification application attached,
 and a first-time Google reporter can be sent to the payout step.
+
+### Y. Nobody can approve a blogger — ✓ **done, 29 September**
+
+> **Shipped and connected the same day. Thank you — and you took the harder
+> option in the two places it mattered.**
+>
+> `/platform/applications` now returns both kinds under a `oneOf`, discriminated
+> by `kind`, and decide, screening, approve, reject and documents all accept
+> either id. Path count is unchanged at 147: no new surface, which is what makes
+> the console work a branch rather than a second desk.
+>
+> Two details we asked about and you answered better than we did:
+>
+> - **`stepIds` is required on `PersonApplication`**, as a fixed enum
+>   `identity | presence | coverage`, described as "the fixed blogger step set
+>   for the console review desk". We had said the phone would have to tell you;
+>   naming it server-side means the reviewer and the applicant cannot drift.
+> - **`missingDocuments` documents the `_or_` split in the schema itself**, and
+>   `missingDocumentGroups` is there beside it.
+>
+> One thing to note rather than fix: `PersonApplication` carries no display name
+> or email, so the console reads the applicant's name out of the `identity`
+> step's `legalName` — the same trick it already uses for an organisation. That
+> works. If a name ever lands at the top level we will prefer it.
+>
+> The original request is kept below as the record of why.
+
+### Y (original). Nobody can approve a blogger — was P0
+
+**Item U shipped half.** A blogger can register, work through three steps,
+attach their Ghana Card and press Send. The application is then in a state no
+endpoint can read and no person can act on. It cannot be approved, rejected,
+screened or even listed.
+
+Traced against `/v1/openapi.json` as of 29 September: `PersonApplication`
+appears on exactly four routes, and all four are the applicant's own side.
+
+```
+GET  /me/verification                          ← the blogger reads their own
+PUT  /me/verification/steps/{stepId}           ← the blogger fills it in
+POST /me/verification/steps/{stepId}/submit    ← the blogger sends a step
+POST /me/verification/submit                   ← the blogger sends the lot
+```
+
+All 35 `/platform/*` routes were checked. `/platform/applications` returns
+`OnboardingApplication` — the organisation shape — and there is nothing else.
+
+**This is our miss as much as yours.** §9.5 asked for the platform queue in the
+same breath as the applicant track, and when the endpoints landed we connected
+the half a phone can see and did not check that anybody could act on the result.
+The blogger card is live in the app today, so every blogger who signs up is
+filling in a form that goes nowhere.
+
+**What is needed** — the organisation equivalents already exist and work, so
+this is the same five routes against a person:
+
+```
+GET  /platform/person-applications                          → page of PersonApplication
+POST /platform/person-applications/{id}/steps/{stepId}/decide   { decision, note? }
+POST /platform/person-applications/{id}/screening               { clear: boolean }
+POST /platform/person-applications/{id}/approve
+POST /platform/person-applications/{id}/reject                  { reason }
+GET  /platform/person-applications/{id}/documents/{documentType} → the file
+```
+
+**Or simpler for you, and we would prefer it:** let the existing
+`/platform/applications` return both kinds, discriminated by the `kind` field
+`PersonApplication` already carries (`"blogger"`), and let the existing decide,
+screening, approve and reject routes accept either id. The console's approval
+desk is built, tested and connected — it would need a branch for the step set
+rather than a second screen. Whichever you pick, say which, because the console
+work differs.
+
+**Two details that follow from the shapes you already shipped:**
+
+1. `PersonApplication.steps` arrives as `{}` and `stepId` is a free string, so
+   the reviewer's screen has to be told the step set out of band. The phone
+   sends `identity`, `presence`, `coverage` — if you would rather pin that
+   server-side, say so and we will read it from you instead.
+2. `missingDocuments` names alternative groups (`utility_bill_or_premises_proof`),
+   which the reviewer's screen needs to split the same way the phone does.
+
+**Approving must set `verified: true` on `MeProfile` and on the public
+`Reporter`** — both of which already exist, so that part is done.
+
+**Done when** a platform owner can see a submitted blogger application in the
+console, decide its steps, record screening, approve it, and the blogger's next
+`GET /me` says `verified: true`.
 
 ### Is this list complete?
 

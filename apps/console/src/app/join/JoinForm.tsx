@@ -13,23 +13,27 @@ type Step = 'stance' | 'how';
 /**
  * How somebody joins an organisation that already uses Dawuro.
  *
- * **Nothing here creates anything, and the page now says so first.**
+ * **Two ways in, and both of them now work.**
  *
- * The service has no endpoint that raises a membership request: it can list them
- * and decide them, but nothing creates one. Joining happens by redeeming an
- * invite — `POST /invites/{token}/accept` — which the organisation issues from
- * its Team screen.
+ * Redeem an invite the organisation issued — `POST /invites/{token}/accept` —
+ * or ask them directly, which is `POST /membership-requests`. Either way the
+ * organisation decides: an employee never grants themselves access to
+ * citizens' footage.
  *
- * Two versions of this flow were wrong before. The first faked a submit and said
- * "Request sent", so people waited on a decision no screen could ever show. The
- * second was honest but left the explanation until step three: it collected a
- * full name, work email, phone, stated role, branch and a free-text note, and
- * *then* said nothing had been sent. Six fields typed into a form that discards
- * them is a worse apology than the lie it replaced.
+ * **The asking half was missing for a long time and the page said so.** Three
+ * versions of this flow have now existed. The first faked a submit and said
+ * "Request sent", so people waited on a decision no screen could show. The
+ * second was honest but left the explanation until step three, after six
+ * fields it then discarded — a worse apology than the lie it replaced. The
+ * third removed the form and stated plainly that the service had no endpoint
+ * for it, which was true when it was written.
  *
- * So the truth is on the first screen that can carry it, the details step is
- * gone entirely, and the page has one action that actually works: redeem an
- * invite. The employer picker stays only to answer "who do I ask".
+ * It stopped being true. `POST /membership-requests` shipped, documented as
+ * the *"Signed-in outsider path for the console /join page"* — this page — and
+ * nothing came back to use it, so an organisation's Team screen carried a
+ * Requests tab listing requests no client could create. The form is back, with
+ * the two optional fields a reviewer actually needs, and it marks itself sent
+ * only once the service has accepted.
  */
 export function JoinForm({ organisations }: { organisations: OrganisationAccount[] }) {
   const router = useRouter();
@@ -38,6 +42,11 @@ export function JoinForm({ organisations }: { organisations: OrganisationAccount
   const [query, setQuery] = useState('');
   const [businessId, setBusinessId] = useState<string | null>(null);
   const [invite, setInvite] = useState('');
+  const [statedRole, setStatedRole] = useState('');
+  const [note, setNote] = useState('');
+  const [asking, setAsking] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
 
   const organisation = organisations.find((b) => b.id === businessId) ?? null;
 
@@ -63,6 +72,46 @@ export function JoinForm({ organisations }: { organisations: OrganisationAccount
     const value = fromUrl?.[1] ?? raw;
     return /^[A-Za-z0-9._~-]{6,}$/.test(value) ? value : null;
   }, [invite]);
+
+  /**
+   * Send the request, and say what happened either way.
+   *
+   * Marked sent only once the service has accepted it. An optimistic "asked"
+   * here would be the third version of this page to tell somebody a request
+   * exists when none does, which is the whole reason the previous two were
+   * rewritten.
+   */
+  const ask = async () => {
+    if (!businessId) return;
+    setAsking(true);
+    setFailure(null);
+    try {
+      const res = await fetch('/api/membership-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orgId: businessId,
+          ...(statedRole.trim() ? { statedRole: statedRole.trim() } : {}),
+          ...(note.trim() ? { note: note.trim() } : {}),
+        }),
+      });
+      const answer = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) {
+        setFailure(
+          answer?.error ??
+            (res.status === 401
+              ? 'Sign in first, so they know who is asking.'
+              : `That could not be sent — the service answered ${res.status}.`),
+        );
+        return;
+      }
+      setSent(true);
+    } catch {
+      setFailure('The console could not reach its own server. Nothing was sent.');
+    } finally {
+      setAsking(false);
+    }
+  };
 
   if (step === 'stance') {
     return (
@@ -145,12 +194,11 @@ export function JoinForm({ organisations }: { organisations: OrganisationAccount
         decides what somebody should do next.
       */}
       <Panel className="p-5">
-        <h2 className="text-sm font-semibold">Joining starts with an invite</h2>
+        <h2 className="text-sm font-semibold">Two ways in, and the organisation decides both</h2>
         <p className="mt-1.5 text-xs leading-relaxed text-text-muted">
-          There is no application to fill in here, and that is deliberate — an employee cannot
-          create an account that grants itself access to citizens&rsquo; footage. Someone already
-          inside the organisation creates an invite link from their Team screen and sends it to
-          you. Opening it puts you in their team, with the role they chose.
+          Someone already inside can send you an invite link, or you can ask them below and they
+          approve it from their Team screen. Either way an employee never grants themselves access
+          to citizens&rsquo; footage — that is always an act by somebody already in the team.
         </p>
         <p className="mt-3 flex items-start gap-2 rounded-sm bg-canvas-raise px-3 py-2.5 text-xs leading-relaxed text-text-muted">
           <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-faint" />
@@ -248,12 +296,67 @@ export function JoinForm({ organisations }: { organisations: OrganisationAccount
           )}
         </div>
 
+        {/*
+          Asking, which this page said was impossible.
+
+          **`POST /membership-requests` exists and is documented for this very
+          screen** — "Signed-in outsider path for the console /join page". The
+          copy above was written when it did not, and stayed after it landed, so
+          an organisation's Team screen has carried a Requests tab listing
+          requests that no client could create.
+
+          Only the organisation is required; the rest is optional on the wire
+          and offered here because a reviewer needs it. The name on a personal
+          account is frequently not the name a colleague recognises, and a
+          request with neither a role nor a note is one an admin has to chase
+          before they can act on it.
+        */}
         {organisation ? (
-          <p className="mt-3 rounded-sm bg-accent-wash/40 px-3 py-2.5 text-xs leading-relaxed text-text-secondary">
-            <span className="font-semibold text-text-primary">{organisation.name}</span> is on
-            Dawuro. Ask whoever manages their account to send you an invite link from their Team
-            screen.
-          </p>
+          sent ? (
+            <div className="mt-3 rounded-sm border border-success/30 bg-success-wash/30 p-3.5">
+              <p className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                <Check className="h-4 w-4 text-success" strokeWidth={2.5} />
+                Asked {organisation.name}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-text-muted">
+                It is in their Team screen now. Somebody with admin access there decides it — you
+                will be in their team once they approve, and nothing reaches you before that.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-3 space-y-2.5 rounded-sm border border-hairline/[0.10] p-3.5">
+              <p className="text-xs leading-relaxed text-text-secondary">
+                <span className="font-semibold text-text-primary">{organisation.name}</span> is on
+                Dawuro. Ask them to add you, or paste an invite link above if you already have one.
+              </p>
+              <input
+                type="text"
+                value={statedRole}
+                onChange={(e) => setStatedRole(e.target.value)}
+                placeholder="What you do there — reporter, editor, desk officer"
+                aria-label="Your role there"
+                className="h-10 w-full rounded-sm border border-hairline/15 bg-canvas-soft px-3 text-base placeholder:text-text-faint focus:border-accent"
+              />
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={2}
+                placeholder="Anything that helps them place you (optional)"
+                aria-label="Note for the organisation"
+                className="w-full rounded-sm border border-hairline/15 bg-canvas-soft px-3 py-2 text-base leading-relaxed placeholder:text-text-faint focus:border-accent"
+              />
+              <div className="flex items-center justify-between gap-3">
+                <Button disabled={asking} onClick={() => void ask()}>
+                  {asking ? 'Sending…' : 'Ask to join'} <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+                {failure ? (
+                  <p role="alert" className="min-w-0 flex-1 text-xs leading-relaxed text-danger">
+                    {failure}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          )
         ) : null}
       </Panel>
 
